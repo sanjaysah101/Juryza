@@ -35,6 +35,8 @@ export function NavBar() {
 
         <nav className="flex items-center gap-0.5 text-sm">
           <NavLink href="/gallery">Gallery</NavLink>
+          <NavLink href="/vote">Vote</NavLink>
+          <NavLink href="/results">Results</NavLink>
           {isParticipant && <NavLink href="/dashboard">My projects</NavLink>}
           {isParticipant && <NavLink href="/teams">Teams</NavLink>}
           {isJudge && <NavLink href="/judge">Judge console</NavLink>}

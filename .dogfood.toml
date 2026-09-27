@@ -10,10 +10,10 @@ claimed = ["T1", "T2"]
 pitch = "Self-hostable, API-first hackathon submission & judging portal with backend-enforced role isolation and documented z-score normalization."
 
 [auth]
-organizer   = "Authorization: Bearer wBbhBFbjgbHaVAB1syg65LVYxelsqTah"
-judge_a     = "Authorization: Bearer SzJVr2oiGp62Ubn86Ckn8Fqc9iZcYOfp"
-judge_b     = "Authorization: Bearer u7tNHYO1X4RyekARQuozg42uaaUqWrRZ"
-participant = "Authorization: Bearer -b9xwN2Tm45CuH1KQLGUTT793OJZD2-y"
+organizer   = "Authorization: Bearer R3fje5vNWtTTyIejArHb09w7YalhcD-Y"
+judge_a     = "Authorization: Bearer tXajySVXfSZeNXAe1WDPQeOiJ3VxgNI4"
+judge_b     = "Authorization: Bearer Hh1B7xFqrcsV1wLPsNtae9NNTZCMHCXQ"
+participant = "Authorization: Bearer g80zOfJ_8B-49WVof51pl00RFCxIAqv9"
 
 [routes]
 gallery      = "/api/gallery"

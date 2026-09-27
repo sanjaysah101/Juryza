@@ -165,8 +165,11 @@ async function main() {
     description: "Seeded from the DOGFOOD 2026 fixture dataset.",
     submissionsOpen: new Date("2026-02-20T00:00:00Z"),
     submissionsClose: new Date(fx.event.submissions_close), // PAST — closes submissions
-    votingOpen: new Date("2026-03-01T18:00:00Z"),
-    votingClose: new Date("2026-03-08T18:00:00Z"),
+    // Community voting is OPEN now so the T3 flow is demonstrable end to end in a
+    // freshly seeded portal (submissions are closed, voting is live — the natural
+    // post-deadline phase). The window is wide around "now".
+    votingOpen: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    votingClose: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
     resultsPublished: false,
   });
 
@@ -400,8 +403,8 @@ async function main() {
 base_url = "${baseUrl}"
 
 [tiers]
-claimed = ["T1", "T2"]
-pitch = "Self-hostable, API-first hackathon submission & judging portal with backend-enforced role isolation and documented z-score normalization."
+claimed = ["T1", "T2", "T3"]
+pitch = "Self-hostable, API-first hackathon submission & judging portal with backend-enforced role isolation, documented z-score normalization, and quadratic community voting."
 
 [auth]
 organizer   = "Authorization: Bearer ${orgToken}"
