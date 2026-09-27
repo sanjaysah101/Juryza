@@ -1,6 +1,7 @@
-import { desc, eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { isResponse, requireRole } from "@/lib/api-auth";
@@ -27,7 +28,9 @@ const createSchema = z.object({
   votingClose: z.string().datetime().optional(),
   tracks: z.array(z.string()).default([]),
   prizes: z
-    .array(z.object({ name: z.string(), amount: z.string().optional(), rank: z.number().optional() }))
+    .array(
+      z.object({ name: z.string(), amount: z.string().optional(), rank: z.number().optional() })
+    )
     .default([]),
   rubric: z
     .array(
@@ -36,7 +39,7 @@ const createSchema = z.object({
         label: z.string(),
         description: z.string().optional(),
         weight: z.number().positive().default(1),
-      }),
+      })
     )
     .default([]),
 });
@@ -52,11 +55,18 @@ export async function POST(req: NextRequest) {
 
   const parsed = createSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid body", issues: parsed.error.issues }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid body", issues: parsed.error.issues },
+      { status: 400 }
+    );
   }
   const b = parsed.data;
 
-  const existing = await db.select({ id: event.id }).from(event).where(eq(event.slug, b.slug)).limit(1);
+  const existing = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(eq(event.slug, b.slug))
+    .limit(1);
   if (existing.length > 0) {
     return NextResponse.json({ error: "Slug already in use" }, { status: 409 });
   }

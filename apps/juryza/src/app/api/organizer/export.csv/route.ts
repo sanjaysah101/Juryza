@@ -1,11 +1,12 @@
-import { eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
+import { eq } from "drizzle-orm";
+
 import { isResponse, requireRole } from "@/lib/api-auth";
 import { audit } from "@/lib/audit";
-import { db, project, rubricCriterion, score, team, track } from "@/lib/db";
 import { toCsv } from "@/lib/csv";
+import { db, project, rubricCriterion, score, team, track } from "@/lib/db";
 import { getActiveEvent } from "@/lib/events";
 import { aggregateByProject, normalizeScores, toScoreRows } from "@/lib/scoring";
 
@@ -93,7 +94,7 @@ export async function GET(req: NextRequest) {
       "repo_url",
       "submitted_at",
     ],
-    rows,
+    rows
   );
 
   await audit({

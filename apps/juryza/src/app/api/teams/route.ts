@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { isResponse, requireRole } from "@/lib/api-auth";
@@ -30,7 +31,10 @@ export async function POST(req: NextRequest) {
 
   const parsed = createSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid body", issues: parsed.error.issues }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid body", issues: parsed.error.issues },
+      { status: 400 }
+    );
   }
 
   const teamId = id.team();
@@ -52,7 +56,7 @@ export async function POST(req: NextRequest) {
       inviteToken,
       inviteUrl: `${origin}/teams/join/${inviteToken}`,
     },
-    { status: 201 },
+    { status: 201 }
   );
 }
 

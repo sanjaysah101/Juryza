@@ -1,14 +1,15 @@
-import { and, eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
+import type { Identity } from "@/lib/api-auth";
 import { forbidden, isResponse, requireRole } from "@/lib/api-auth";
 import { audit } from "@/lib/audit";
+import type { Project } from "@/lib/db";
 import { db, project, teamMember } from "@/lib/db";
 import { getActiveEvent, submissionsOpen } from "@/lib/events";
-import type { Identity } from "@/lib/api-auth";
-import type { Project } from "@/lib/db";
 
 /**
  * A single project: read, edit-until-deadline, submit (T1).
@@ -83,7 +84,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
 
   const parsed = updateSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid body", issues: parsed.error.issues }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid body", issues: parsed.error.issues },
+      { status: 400 }
+    );
   }
   const b = parsed.data;
 

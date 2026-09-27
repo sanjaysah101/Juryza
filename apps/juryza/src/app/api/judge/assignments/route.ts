@@ -1,6 +1,7 @@
-import { and, eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+
+import { and, eq } from "drizzle-orm";
 
 import { forbidden, resolveIdentity, unauthorized } from "@/lib/api-auth";
 import { assignment, db, project, score, track } from "@/lib/db";
@@ -42,7 +43,7 @@ export async function GET(req: NextRequest) {
     .leftJoin(track, eq(track.id, project.trackId))
     .leftJoin(
       score,
-      and(eq(score.projectId, assignment.projectId), eq(score.judgeId, assignment.judgeId)),
+      and(eq(score.projectId, assignment.projectId), eq(score.judgeId, assignment.judgeId))
     )
     .where(and(eq(assignment.eventId, activeEvent.id), eq(assignment.judgeId, identity.userId)));
 

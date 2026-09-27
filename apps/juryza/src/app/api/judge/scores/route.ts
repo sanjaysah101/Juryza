@@ -1,6 +1,7 @@
-import { and, eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { forbidden, isResponse, requireRole, resolveIdentity, unauthorized } from "@/lib/api-auth";
@@ -121,7 +122,10 @@ export async function POST(req: NextRequest) {
 
   const parsed = scoreSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid body", issues: parsed.error.issues }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid body", issues: parsed.error.issues },
+      { status: 400 }
+    );
   }
   const b = parsed.data;
 

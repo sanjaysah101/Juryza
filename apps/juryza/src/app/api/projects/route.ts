@@ -1,6 +1,7 @@
-import { and, eq, inArray } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 
 import { forbidden, isResponse, requireRole } from "@/lib/api-auth";
@@ -61,13 +62,16 @@ export async function POST(req: NextRequest) {
         error: "Submissions are closed",
         submissionsClose: activeEvent.submissionsClose,
       },
-      { status: 403 },
+      { status: 403 }
     );
   }
 
   const parsed = createSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid body", issues: parsed.error.issues }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid body", issues: parsed.error.issues },
+      { status: 400 }
+    );
   }
   const body = parsed.data;
 
@@ -114,7 +118,10 @@ export async function POST(req: NextRequest) {
     ipAddress: req.headers.get("x-forwarded-for"),
   });
 
-  return NextResponse.json({ id: projectId, status: body.submit ? "submitted" : "draft" }, { status: 201 });
+  return NextResponse.json(
+    { id: projectId, status: body.submit ? "submitted" : "draft" },
+    { status: 201 }
+  );
 }
 
 /**
