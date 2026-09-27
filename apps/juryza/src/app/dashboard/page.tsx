@@ -56,7 +56,16 @@ export default function DashboardPage() {
       qc.invalidateQueries({ queryKey: ["my-projects"] });
       router.push(`/projects/${res.id}/edit`);
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => {
+      if (e.message.includes("Submissions are closed")) {
+        toast.error(
+          "Submissions are closed for the active event. Create a new event to reopen registration."
+        );
+        router.push("/organizer/new");
+        return;
+      }
+      toast.error(e.message);
+    },
   });
 
   return (
@@ -66,9 +75,14 @@ export default function DashboardPage() {
           <h1 className="text-3xl font-semibold tracking-tight">My projects</h1>
           <p className="text-muted-foreground mt-1">Draft, edit, and submit before the deadline.</p>
         </div>
-        <Button onClick={() => create.mutate()} disabled={create.isPending}>
-          <FilePlus2 className="size-4" /> New project
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => create.mutate()} disabled={create.isPending}>
+            <FilePlus2 className="size-4" /> New project
+          </Button>
+          <Button variant="outline" nativeButton={false} render={<Link href="/organizer/new" />}>
+            Create event
+          </Button>
+        </div>
       </div>
 
       <div className="mt-8 flex flex-col gap-3">

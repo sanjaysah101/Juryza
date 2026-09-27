@@ -6,14 +6,14 @@
 base_url = "http://localhost:8080"
 
 [tiers]
-claimed = ["T1", "T2", "T3"]
-pitch = "Self-hostable, API-first hackathon submission & judging portal with backend-enforced role isolation, documented z-score normalization, and quadratic community voting."
+claimed = ["T1", "T2", "T3", "T4"]
+pitch = "Self-hostable, API-first hackathon submission & judging portal: backend-enforced role isolation, documented z-score + Bradley-Terry judging, quadratic voting, OpenAPI, webhooks, verifiable certificates."
 
 [auth]
-organizer   = "Authorization: Bearer cHJ3ZL7LC57Cdpzd5HkannSoOcGsWO4n"
-judge_a     = "Authorization: Bearer BwAPyzHR5uBU7ZOh0gsCGTUYsgaSLv9k"
-judge_b     = "Authorization: Bearer 5_HU7eSmzNsAcloZ1YefK4IFItHMb6he"
-participant = "Authorization: Bearer JakNz-dQaCN_FjxrMY_yybF-IvMyrh0f"
+organizer   = "Authorization: Bearer xf5UaIfGRLGqpLL0FKcJqPI8JZzatwzK"
+judge_a     = "Authorization: Bearer 1aIF0hVMCs-mTaKGJCw3rc66U3u4CA9I"
+judge_b     = "Authorization: Bearer OVZvsZVmABTQsmMg8uDsMU8fWLS28HSK"
+participant = "Authorization: Bearer wA4-FeHTWCGcxYS7CmJeaNnjW_Hmgu75"
 
 [routes]
 gallery      = "/api/gallery"

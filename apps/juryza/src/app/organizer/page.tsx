@@ -89,7 +89,10 @@ export default function OrganizerPage() {
           <h1 className="text-3xl font-semibold tracking-tight">Organizer dashboard</h1>
           <p className="text-muted-foreground mt-1">Judging progress, results and exports.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button nativeButton={false} render={<a href="/organizer/new" />}>
+            <Wand2 className="size-4" /> Create event
+          </Button>
           <Button variant="outline" onClick={() => assign.mutate()} disabled={assign.isPending}>
             <Wand2 className="size-4" /> Auto-assign judges
           </Button>

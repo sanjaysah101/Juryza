@@ -1,10 +1,10 @@
 /**
  * Seed the portal from `fixtures.json`.
  *
- * Run at container boot (`bun run boot`) after the schema is pushed. It is
- * idempotent by way of a clean slate: it truncates the domain and auth tables
- * first, so `docker compose up` always produces the same, known state the
- * acceptance checker expects.
+ * Run at container boot (`bun run boot`) after the schema is pushed. We do not
+ * reset the database on every compose start because that deletes real user
+ * accounts and team data. Instead, the seed is idempotent and only does a full
+ * reset when `SEED_RESET=1` is set explicitly.
  *
  * What it does, in order:
  *  1. Load the shared `fixtures.json` (same file every team seeds).
@@ -152,6 +152,19 @@ async function truncateAll() {
 }
 
 async function main() {
+  const resetRequested = process.env.SEED_RESET === "1";
+  const existingUsers = await db.select({ id: userTable.id }).from(userTable).limit(1);
+
+  if (!resetRequested && existingUsers.length > 0) {
+    console.info("[seed] existing users detected; skipping reseed to preserve data");
+    return;
+  }
+
+  if (resetRequested) {
+    console.info("[seed] SEED_RESET=1 requested; clearing seeded data before bootstrap");
+    await truncateAll();
+  }
+
   const fx = loadFixtures();
   console.info("[seed] loaded fixtures:", {
     tracks: fx.tracks.length,
@@ -160,8 +173,6 @@ async function main() {
     projects: fx.projects.length,
     scores: fx.scores.length,
   });
-
-  await truncateAll();
 
   // ---- Event ----------------------------------------------------------
   await db.insert(event).values({

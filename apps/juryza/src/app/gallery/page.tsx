@@ -15,13 +15,7 @@ import {
   EmptyTitle,
 } from "@juryza/ui/components/ui/empty";
 import { Input } from "@juryza/ui/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@juryza/ui/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@juryza/ui/components/ui/select";
 import { Skeleton } from "@juryza/ui/components/ui/skeleton";
 
 import { api } from "@/lib/api";
@@ -67,6 +61,9 @@ export default function GalleryPage() {
     queryFn: () => api.get<{ tracks: { id: string; name: string }[] }>("/api/tracks"),
   });
 
+  const selectedTrackLabel =
+    track === "all" ? "All tracks" : (tracks?.tracks.find((t) => t.id === track)?.name ?? track);
+
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6">
       <div className="flex flex-col gap-2">
@@ -89,7 +86,7 @@ export default function GalleryPage() {
         </div>
         <Select value={track} onValueChange={(v) => setTrack(v ?? "all")}>
           <SelectTrigger className="sm:w-56">
-            <SelectValue placeholder="All tracks" />
+            <span className="flex-1 text-left">{selectedTrackLabel}</span>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All tracks</SelectItem>
