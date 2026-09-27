@@ -1,0 +1,56 @@
+# Juryza — one command to a seeded, working portal.
+#
+#   docker compose up
+#
+# Brings up Postgres and the portal, pushes the schema, seeds from
+# fixtures.json, writes .dogfood.toml back to this directory, and serves the
+# portal at http://localhost:8080. Runs entirely offline — no cloud account, no
+# hosted database, no external API.
+
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: juryza
+      POSTGRES_PASSWORD: juryza
+      POSTGRES_DB: juryza
+    # No published port by default — the portal reaches it over the compose
+    # network. Uncomment to inspect with a local client.
+    # ports:
+    #   - "5432:5432"
+    volumes:
+      # PostgreSQL 18 places data in a subdirectory of /var/lib/postgresql, so
+      # the mount sits one level up (see docker-library/postgres#37).
+      - juryza-db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U juryza -d juryza"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  portal:
+    build:
+      context: .
+      dockerfile: apps/juryza/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://juryza:juryza@db:5432/juryza
+      BETTER_AUTH_SECRET: dogfood-2026-dev-secret-please-rotate-in-prod
+      BETTER_AUTH_URL: http://localhost:8080
+      PORTAL_BASE_URL: http://localhost:8080
+      # Where the seed writes the generated .dogfood.toml (mounted below).
+      DOGFOOD_TOML_PATH: /repo/.dogfood.toml
+      FIXTURES_PATH: /repo/fixtures.json
+      NODE_ENV: production
+    ports:
+      - "8080:8080"
+    volumes:
+      # Share fixtures in and the generated .dogfood.toml out with the host, so
+      # `python3 run.py .dogfood.toml` works from the repo root after boot.
+      - ./fixtures.json:/repo/fixtures.json:ro
+      - ./.dogfood.toml:/repo/.dogfood.toml
+
+volumes:
+  juryza-db:
