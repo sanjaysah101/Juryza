@@ -393,6 +393,39 @@ async function main() {
       .onConflictDoNothing();
   }
 
+  // ---- Seed pairwise comparisons (T2 bonus demo) ----------------------
+  // Derive comparisons from the fixture scores so the Bradley–Terry ranking has
+  // signal on first boot: for each fixture judge, order the projects they scored
+  // by weighted raw score and record "higher beats lower" for adjacent pairs.
+  const scoresByJudge = new Map<string, { project: string; raw: number }[]>();
+  for (const s of fx.scores) {
+    const judgeUid = judgeUserId.get(s.judge);
+    if (!judgeUid) continue;
+    const vals = Object.values(s.criteria);
+    const raw = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+    const list = scoresByJudge.get(judgeUid) ?? [];
+    list.push({ project: s.project, raw });
+    scoresByJudge.set(judgeUid, list);
+  }
+  for (const [judgeUid, list] of scoresByJudge) {
+    const ordered = [...list].sort((a, b) => b.raw - a.raw);
+    for (let i = 0; i + 1 < ordered.length; i++) {
+      const winner = ordered[i];
+      const loser = ordered[i + 1];
+      if (!winner || !loser || winner.raw === loser.raw) continue;
+      await db
+        .insert(pairwiseVote)
+        .values({
+          id: id.pairwise(),
+          eventId: fx.event.id,
+          judgeId: judgeUid,
+          winnerId: winner.project,
+          loserId: loser.project,
+        })
+        .onConflictDoNothing();
+    }
+  }
+
   // ---- Bearer tokens --------------------------------------------------
   const orgToken = await mintToken(organizerId, "acceptance: organizer");
   const judgeAToken = await mintToken(judgeAId, "acceptance: judge_a");

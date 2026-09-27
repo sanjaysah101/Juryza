@@ -132,6 +132,26 @@ const spec = {
         responses: { "200": { description: "OK" }, "403": { description: "Not a judge" } },
       },
     },
+    "/api/judge/pairwise": {
+      get: {
+        summary: "Get two assigned projects to compare (pairwise mode)",
+        responses: {
+          "200": { description: "A pair, or null" },
+          "403": { description: "Not a judge" },
+        },
+      },
+      post: {
+        summary: "Record a pairwise comparison (winner beats loser)",
+        responses: { "200": { description: "OK" }, "403": { description: "Not assigned" } },
+      },
+    },
+    "/api/results/pairwise": {
+      get: {
+        summary: "Bradley–Terry global ranking from pairwise comparisons",
+        security: [],
+        responses: { "200": { description: "Ranking (hidden until published)" } },
+      },
+    },
     "/api/organizer/dashboard": {
       get: {
         summary: "Progress + normalized results (organizer)",

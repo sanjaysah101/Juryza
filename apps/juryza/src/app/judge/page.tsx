@@ -78,8 +78,15 @@ export default function JudgeConsolePage() {
 
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-10 sm:px-6">
-      <h1 className="text-3xl font-semibold tracking-tight">Judge console</h1>
-      <p className="text-muted-foreground mt-1">Score the projects assigned to you.</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Judge console</h1>
+          <p className="text-muted-foreground mt-1">Score the projects assigned to you.</p>
+        </div>
+        <Button variant="outline" nativeButton={false} render={<a href="/judge/pairwise" />}>
+          Try pairwise mode
+        </Button>
+      </div>
 
       {data && (
         <div className="mt-6 flex items-center gap-4">
