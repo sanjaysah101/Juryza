@@ -442,8 +442,8 @@ async function main() {
 base_url = "${baseUrl}"
 
 [tiers]
-claimed = ["T1", "T2", "T3"]
-pitch = "Self-hostable, API-first hackathon submission & judging portal with backend-enforced role isolation, documented z-score normalization, and quadratic community voting."
+claimed = ["T1", "T2", "T3", "T4"]
+pitch = "Self-hostable, API-first hackathon submission & judging portal: backend-enforced role isolation, documented z-score + Bradley-Terry judging, quadratic voting, OpenAPI, webhooks, verifiable certificates."
 
 [auth]
 organizer   = "Authorization: Bearer ${orgToken}"
