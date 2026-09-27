@@ -38,6 +38,7 @@ import {
   comment,
   db,
   event,
+  judgeTracks,
   pairwiseVote,
   prize,
   project,
@@ -123,6 +124,7 @@ async function truncateAll() {
     pairwiseVote,
     score,
     assignment,
+    judgeTracks,
     project,
     teamMember,
     team,
@@ -216,6 +218,13 @@ async function main() {
       role: "judge",
     });
     judgeUserId.set(j.id, uid);
+    // Track eligibility: a track judge only reviews their tracks.
+    for (const trackId of j.tracks) {
+      await db
+        .insert(judgeTracks)
+        .values({ eventId: fx.event.id, judgeId: uid, trackId })
+        .onConflictDoNothing();
+    }
   }
 
   // ---- Teams + members ------------------------------------------------

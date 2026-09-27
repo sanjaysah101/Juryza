@@ -30,10 +30,7 @@ async function parse(res: Response): Promise<unknown> {
   }
 }
 
-export async function apiFetch<T = unknown>(
-  path: string,
-  init?: RequestInit,
-): Promise<T> {
+export async function apiFetch<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     credentials: "include",

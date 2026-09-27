@@ -238,6 +238,30 @@ export const project = pgTable("project", {
 });
 
 /**
+ * Which tracks a judge is eligible to review (T2).
+ *
+ * "A track judge must never see another track." Eligibility is captured here and
+ * honored by the assignment algorithm (`lib/assignment.ts`) and again enforced
+ * in the backend at read time. A judge with no rows here is a generalist,
+ * eligible for every track. Mirrors the fixture judges' `tracks` array.
+ */
+export const judgeTracks = pgTable(
+  "judge_tracks",
+  {
+    eventId: text("event_id")
+      .notNull()
+      .references(() => event.id, { onDelete: "cascade" }),
+    judgeId: text("judge_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    trackId: text("track_id")
+      .notNull()
+      .references(() => track.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.judgeId, t.trackId] })]
+);
+
+/**
  * Judge ↔ project assignment (T2).
  *
  * A judge only ever sees the projects assigned to them. Rows are created by the

@@ -45,3 +45,7 @@ yarn-error.log*
 .env
 .env.*
 !.env.example
+
+# Local docker build diagnostics
+build.log
+build2.log

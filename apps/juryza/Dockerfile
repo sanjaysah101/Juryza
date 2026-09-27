@@ -13,20 +13,18 @@
 FROM oven/bun:1.3.14 AS base
 WORKDIR /repo
 
-# --- deps: install the full workspace (dev deps needed for build + drizzle-kit)
-FROM base AS deps
-COPY package.json bun.lock* ./
-COPY turbo.json biome.json ./
-COPY packages ./packages
-COPY apps/juryza/package.json ./apps/juryza/package.json
-RUN bun install --frozen-lockfile || bun install
-
-# --- build: compile the Next app to a standalone server bundle
+# --- build: install the full workspace and compile the Next app.
+# A single install over the whole repo keeps Bun's workspace hoisting identical
+# to local dev, so Turbopack resolves `next` the same way it does on a laptop.
 FROM base AS build
-COPY --from=deps /repo/node_modules ./node_modules
 COPY . .
-WORKDIR /repo/apps/juryza
-RUN bun run build
+RUN bun install --frozen-lockfile || bun install
+# Build with the Webpack builder, not Turbopack: Turbopack's native binary
+# segfaults (SIGILL/exit 132) inside some container CPU environments after
+# compiling successfully. Webpack is slower but rock-solid here, and the runtime
+# output (standalone server) is identical. `next.config.ts` pins the workspace
+# root so dependency resolution stays correct either way.
+RUN cd /repo/apps/juryza && bunx --bun next build --webpack
 
 # --- runtime: everything needed to push schema, seed, and serve
 FROM base AS runtime
@@ -34,15 +32,11 @@ ENV NODE_ENV=production
 ENV PORT=8080
 ENV HOSTNAME=0.0.0.0
 
-# Full install so drizzle-kit and the seed's tsx-style bun execution work.
-COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=build /repo ./
 
 WORKDIR /repo/apps/juryza
 EXPOSE 8080
 
-# The entrypoint waits for Postgres, pushes the schema, seeds, then starts the
-# standalone server. It writes .dogfood.toml back to the repo root (mounted).
 COPY apps/juryza/docker-entrypoint.sh /usr/local/bin/juryza-entrypoint.sh
 RUN chmod +x /usr/local/bin/juryza-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/juryza-entrypoint.sh"]

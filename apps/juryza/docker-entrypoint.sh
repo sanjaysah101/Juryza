@@ -22,11 +22,21 @@ done
 echo "[entrypoint] postgres is ready"
 
 echo "[entrypoint] pushing schema ..."
-bun run db:push
+bunx --bun drizzle-kit push --force
 
 echo "[entrypoint] seeding from fixtures.json ..."
-bun run seed
+bun run src/lib/db/seed.ts
+
+# The standalone bundle does not include static assets or the public folder —
+# Next expects them copied next to server.js. Do it here so CSS/JS chunks and
+# public files are served (otherwise the pages load unstyled with 404s).
+STANDALONE=/repo/apps/juryza/.next/standalone/apps/juryza
+mkdir -p "$STANDALONE/.next"
+cp -r /repo/apps/juryza/.next/static "$STANDALONE/.next/static"
+if [ -d /repo/apps/juryza/public ]; then
+  cp -r /repo/apps/juryza/public "$STANDALONE/public"
+fi
 
 echo "[entrypoint] starting portal on :8080 ..."
 # Run the standalone server produced by `next build` (output: "standalone").
-exec bun /repo/apps/juryza/.next/standalone/apps/juryza/server.js
+exec bun "$STANDALONE/server.js"

@@ -1,5 +1,6 @@
 "use client";
 
+import { adminClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import { z } from "zod";
 
@@ -34,6 +35,9 @@ export const userSchema = z.object({
   id: z.string(),
   email: z.string(),
   name: z.string(),
+  // The five-role model (visitor|participant|judge|organizer|admin) surfaced
+  // from the admin plugin so the UI can render role-appropriate navigation.
+  role: z.string(),
 });
 export type User = z.infer<typeof userSchema>;
 
@@ -67,7 +71,9 @@ export const signUpInputSchema = z.object({
  * No `baseURL`: the client defaults to the current origin, and the server is
  * mounted in this same Next app.
  */
-const client = createAuthClient();
+const client = createAuthClient({
+  plugins: [adminClient()],
+});
 
 /**
  * The contract the shared auth UI renders against.
@@ -84,13 +90,19 @@ export const auth = createBetterAuthContract<
 >({
   client,
   mapUser: (user) => {
-    const { id, email, name } = user as { id?: string; email?: string; name?: string | null };
+    const { id, email, name, role } = user as {
+      id?: string;
+      email?: string;
+      name?: string | null;
+      role?: string | null;
+    };
     return {
       id: id ?? "",
       email: email ?? "",
       // Better Auth allows a null name; the app's shape wants a string, and an
       // email is a better fallback label than an empty one.
       name: name ?? email ?? "",
+      role: role ?? "participant",
     };
   },
   // Where Better Auth's reset email should send the user. The template has no
