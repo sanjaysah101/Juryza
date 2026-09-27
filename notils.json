@@ -1,0 +1,11 @@
+{
+  "$schema": "https://notils.com/schema.json",
+  "shape": "monorepo",
+  "scope": "@juryza",
+  "paths": {
+    "packages": "packages",
+    "lib": "src/lib",
+    "components": "src/components",
+    "apps": "apps"
+  }
+}

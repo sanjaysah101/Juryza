@@ -1,0 +1,10 @@
+{
+  "extends": "@juryza/config/tsconfig.react.json",
+  "compilerOptions": {
+    "paths": {
+      "@juryza/auth-ui/*": ["./src/*"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules"]
+}
