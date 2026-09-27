@@ -35,6 +35,7 @@ import {
   apiToken,
   assignment,
   auditLog,
+  certificate,
   comment,
   db,
   event,
@@ -51,6 +52,8 @@ import {
   user as userTable,
   verification,
   vote,
+  webhook,
+  webhookDelivery,
 } from "@/lib/db";
 import { id, secretToken } from "@/lib/ids";
 
@@ -119,6 +122,9 @@ async function truncateAll() {
   // Order matters only without CASCADE; TRUNCATE ... CASCADE handles FKs.
   const tables = [
     auditLog,
+    certificate,
+    webhookDelivery,
+    webhook,
     comment,
     vote,
     pairwiseVote,

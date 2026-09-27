@@ -411,6 +411,69 @@ export const auditLog = pgTable("audit_log", {
     .notNull(),
 });
 
+/**
+ * Webhook subscriptions (T4).
+ *
+ * An organizer registers a URL to receive JSON POSTs when events happen
+ * (project submitted, score saved, results published, …). Each delivery is
+ * signed with the subscription's `secret` via an HMAC header so the receiver can
+ * verify authenticity. Delivery attempts are logged in `webhookDelivery`.
+ */
+export const webhook = pgTable("webhook", {
+  id: text("id").primaryKey(),
+  eventId: text("event_id").references(() => event.id, { onDelete: "cascade" }),
+  url: text("url").notNull(),
+  secret: text("secret").notNull(),
+  // Which event types to deliver; empty = all.
+  events: jsonb("events").$type<string[]>().default([]),
+  active: boolean("active").default(true).notNull(),
+  createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at")
+    .$defaultFn(() => new Date())
+    .notNull(),
+});
+
+export const webhookDelivery = pgTable("webhook_delivery", {
+  id: text("id").primaryKey(),
+  webhookId: text("webhook_id")
+    .notNull()
+    .references(() => webhook.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>(),
+  status: integer("status"),
+  ok: boolean("ok").default(false).notNull(),
+  error: text("error"),
+  createdAt: timestamp("created_at")
+    .$defaultFn(() => new Date())
+    .notNull(),
+});
+
+/**
+ * Judge participation certificates (T4).
+ *
+ * A signed, publicly verifiable record that a judge reviewed for an event. The
+ * `signature` is an HMAC over the canonical fields; anyone can re-verify it at
+ * `/api/certificates/<id>` without an account. `serial` is the human-facing id.
+ */
+export const certificate = pgTable("certificate", {
+  id: text("id").primaryKey(),
+  serial: text("serial").notNull().unique(),
+  eventId: text("event_id")
+    .notNull()
+    .references(() => event.id, { onDelete: "cascade" }),
+  subjectId: text("subject_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  subjectName: text("subject_name").notNull(),
+  kind: text("kind").notNull(), // judge-participation | winner | …
+  statement: text("statement").notNull(),
+  reviewsCompleted: integer("reviews_completed").default(0).notNull(),
+  signature: text("signature").notNull(),
+  issuedAt: timestamp("issued_at")
+    .$defaultFn(() => new Date())
+    .notNull(),
+});
+
 /* ------------------------------------------------------------------ */
 /* Relations                                                          */
 /* ------------------------------------------------------------------ */
@@ -474,3 +537,7 @@ export type Vote = typeof vote.$inferSelect;
 export type Comment = typeof comment.$inferSelect;
 export type ApiToken = typeof apiToken.$inferSelect;
 export type AuditLog = typeof auditLog.$inferSelect;
+export type Webhook = typeof webhook.$inferSelect;
+export type WebhookDelivery = typeof webhookDelivery.$inferSelect;
+export type Certificate = typeof certificate.$inferSelect;
+export type PairwiseVote = typeof pairwiseVote.$inferSelect;

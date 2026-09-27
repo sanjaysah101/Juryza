@@ -8,6 +8,7 @@ import { isResponse, requireRole } from "@/lib/api-auth";
 import { audit } from "@/lib/audit";
 import { db, event } from "@/lib/db";
 import { getActiveEvent } from "@/lib/events";
+import { dispatch } from "@/lib/webhooks";
 
 /**
  * Toggle result publication (T3). Organizer/admin only. Until this is on,
@@ -37,6 +38,13 @@ export async function POST(req: NextRequest) {
     action: parsed.data.published ? "results.published" : "results.unpublished",
     ipAddress: req.headers.get("x-forwarded-for"),
   });
+  if (parsed.data.published) {
+    void dispatch(
+      "results.published",
+      { eventId: activeEvent.id, name: activeEvent.name },
+      activeEvent.id
+    );
+  }
 
   return NextResponse.json({ published: parsed.data.published });
 }

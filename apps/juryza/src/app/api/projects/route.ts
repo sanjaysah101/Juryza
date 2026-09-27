@@ -9,6 +9,7 @@ import { audit } from "@/lib/audit";
 import { db, project, team, teamMember } from "@/lib/db";
 import { getActiveEvent, submissionsOpen } from "@/lib/events";
 import { id } from "@/lib/ids";
+import { dispatch } from "@/lib/webhooks";
 
 /**
  * Project submission (T1).
@@ -117,6 +118,9 @@ export async function POST(req: NextRequest) {
     target: projectId,
     ipAddress: req.headers.get("x-forwarded-for"),
   });
+  if (body.submit) {
+    void dispatch("project.submitted", { projectId, title: body.title }, activeEvent.id);
+  }
 
   return NextResponse.json(
     { id: projectId, status: body.submit ? "submitted" : "draft" },
