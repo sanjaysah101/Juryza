@@ -25,9 +25,8 @@ export default function Home() {
             .
           </p>
           <p>
-            See{" "}
-            <code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">README.md</code> for
-            the project layout and conventions.
+            See <code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">README.md</code>{" "}
+            for the project layout and conventions.
           </p>
         </div>
       </div>
