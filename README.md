@@ -50,8 +50,16 @@ Fixture judges sign in with `judge-password-123`, fixture team members with
 
 ### Verify it
 
+With the containerized stack running (`docker compose up -d`), run the acceptance checker:
+
 ```sh
+# Linux / macOS
 python3 run.py .dogfood.toml
+
+# Windows (if python3 is not aliased)
+python run.py .dogfood.toml
+# or
+py run.py .dogfood.toml
 ```
 
 The committed [`acceptance-report.txt`](./acceptance-report.txt) is that output
@@ -168,9 +176,12 @@ bun run db:push && bun run seed
 bun run dev          # http://localhost:3000
 ```
 
-Quality gates (from the repo root): `bun run typecheck` · `bun run lint` ·
-`bun run test` · `bun run build`. API integration tests run against a live
-server: `JURYZA_TEST_URL=http://localhost:3000 bun run --cwd apps/juryza test`.
+Quality gates (from the repo root):
+- `bun run typecheck` — TypeScript type checking across all workspaces.
+- `bun run lint` — Biome code style and linter checks.
+- `bun run test` — Runs all 75 offline unit tests (scoring math, Bradley-Terry ranking, pairing algorithms, similarity detection, CSV sanitization, quadratic voting, and rich-text parsing).
+- `JURYZA_TEST_URL=http://localhost:8080 bun run --cwd apps/juryza test` — Runs the full 88-test suite, including the 13 live HTTP API integrity and role-isolation tests against the running instance.
+- `bun run build` — Production bundle build.
 
 ## Stack
 
