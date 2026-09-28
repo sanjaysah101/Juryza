@@ -1,55 +1,52 @@
 /**
- * Community voting tally (T3), with quadratic voting.
+ * Community voting maths (T3): quadratic voting with a per-voter budget.
  *
- * One-person-one-vote is trivially gameable by a loud minority, so Juryza
- * supports **quadratic voting**: a voter spends `credits` on a project, and the
- * influence that converts to is `sqrt(credits)`. Spending 9 credits on one
- * project buys 3 units of influence, not 9 — so concentrating force gets
- * expensive fast, which is the point. A plain 1-credit vote is `sqrt(1) = 1`,
- * so simple up-votes still behave intuitively.
- *
- * Documented in JUDGING.md alongside the anti-abuse measures (rate limits,
- * duplicate detection via a unique (project, voter) key, and the audit trail).
+ * Every voter gets `budget` credits for the whole event. Casting `v` votes on
+ * one project costs `v²` credits, so a voter with 16 credits can give one
+ * project 4 votes, or sixteen projects 1 vote each — but never pile 16 votes on
+ * a friend. A project's tally is the plain sum of votes it received. That is
+ * the whole mechanism: intensity of preference is expressible, concentration is
+ * expensive. The budget is enforced by the server (see the votes route), not the
+ * ballot UI.
  */
+
+export const voteCost = (votes: number) => votes * votes;
+
+/** The most votes one project can receive from a voter with `budget` credits. */
+export const maxVotesFor = (budget: number) => Math.floor(Math.sqrt(Math.max(0, budget)));
+
+/** Credits spent across a voter's allocations. */
+export function creditsSpent(allocations: { votes: number }[]): number {
+  return allocations.reduce((acc, a) => acc + voteCost(a.votes), 0);
+}
 
 export interface VoteRow {
   projectId: string;
   voterKey: string;
-  credits: number;
+  votes: number;
 }
 
 export interface VoteTally {
   projectId: string;
   voters: number;
-  influence: number;
+  votes: number;
 }
 
-export function tallyQuadratic(rows: VoteRow[]): VoteTally[] {
-  const byProject = new Map<string, { voters: number; influence: number }>();
+export function tally(rows: VoteRow[]): VoteTally[] {
+  const byProject = new Map<string, VoteTally>();
   for (const r of rows) {
-    const agg = byProject.get(r.projectId) ?? { voters: 0, influence: 0 };
+    const agg = byProject.get(r.projectId) ?? { projectId: r.projectId, voters: 0, votes: 0 };
     agg.voters += 1;
-    agg.influence += Math.sqrt(Math.max(0, r.credits));
+    agg.votes += r.votes;
     byProject.set(r.projectId, agg);
   }
-  const out: VoteTally[] = [];
-  for (const [projectId, agg] of byProject) {
-    out.push({ projectId, voters: agg.voters, influence: agg.influence });
-  }
-  out.sort((a, b) => b.influence - a.influence);
-  return out;
+  return [...byProject.values()].sort((a, b) => b.votes - a.votes || b.voters - a.voters);
 }
 
-/** Whether the voting window is currently open for an event. */
-export function votingOpen(e: { votingOpen: Date | null; votingClose: Date | null }): boolean {
-  const now = Date.now();
-  const opensOk = !e.votingOpen || now >= e.votingOpen.getTime();
-  const closesOk = !e.votingClose || now < e.votingClose.getTime();
-  return opensOk && closesOk;
-}
-
-/** Deterministic shuffle (seeded) so ballot order is randomized but stable per
- * voter — kills position bias without reshuffling on every poll. */
+/**
+ * Deterministic shuffle seeded by the voter, so a ballot's order is random
+ * across voters (no position bias) yet stable for one voter between reloads.
+ */
 export function seededShuffle<T>(items: T[], seed: string): T[] {
   const arr = [...items];
   let h = 2166136261;
@@ -60,12 +57,7 @@ export function seededShuffle<T>(items: T[], seed: string): T[] {
   for (let i = arr.length - 1; i > 0; i--) {
     h = (Math.imul(h, 1103515245) + 12345) & 0x7fffffff;
     const j = h % (i + 1);
-    const a = arr[i];
-    const b = arr[j];
-    if (a !== undefined && b !== undefined) {
-      arr[i] = b;
-      arr[j] = a;
-    }
+    [arr[i], arr[j]] = [arr[j] as T, arr[i] as T];
   }
   return arr;
 }

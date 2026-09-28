@@ -1,504 +1,532 @@
 /**
- * Seed the portal from `fixtures.json`.
+ * Seed the portal. Runs at container boot after the schema is pushed.
  *
- * Run at container boot (`bun run boot`) after the schema is pushed. We do not
- * reset the database on every compose start because that deletes real user
- * accounts and team data. Instead, the seed is idempotent and only does a full
- * reset when `SEED_RESET=1` is set explicitly.
+ * Idempotent: if any user exists the seed does nothing (so restarting never
+ * wipes real data); `SEED_RESET=1` truncates everything first.
  *
- * What it does, in order:
- *  1. Load the shared `fixtures.json` (same file every team seeds).
- *  2. Create the one fixture event with the fixture's *past* close date, so the
- *     "closed event refuses submissions" check passes honestly.
- *  3. Create tracks, prizes and a weighted rubric (the fixture's three criteria).
- *  4. Create every fixture judge as a real `judge` user, every team, every team
- *     member, and every project (all already submitted).
- *  5. Create four well-known test users — organizer / judge_a / judge_b /
- *     participant — mint a bearer token for each, and assign judge_a some
- *     projects with scores so the T2 checks have data.
- *  6. Load the fixture scores.
- *  7. Print the `.dogfood.toml` auth headers and routes so a human can paste
- *     them straight into the config the checker reads.
- *
- * Users are created through Better Auth's own sign-up API so the password hash
- * matches what the login endpoint expects; roles and tokens are then written
- * directly.
+ *  1. Well-known accounts: admin, organizer, judge_a, judge_b, participant.
+ *  2. The DOGFOOD fixture event, imported through the same importer the
+ *     `POST /api/events/import` endpoint uses — with the fixture's *past*
+ *     submission deadline, so the portal is honestly closed to submissions.
+ *     Community voting is open, so the T3 flow is live on first boot.
+ *  3. A sandbox event with submissions open, so an evaluator can walk the whole
+ *     lifecycle (team → project → judging → results) without editing dates.
+ *  4. API tokens for the four checker roles, written to `.dogfood.toml`.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, like, sql } from "drizzle-orm";
 
-import { auth } from "@/lib/auth-better-auth-server";
 import {
-  account,
   apiToken,
   assignment,
-  auditLog,
-  certificate,
-  comment,
   db,
   event,
-  judgeTracks,
-  pairwiseVote,
+  eventJudge,
   prize,
   project,
+  registration,
   rubricCriterion,
   score,
-  session,
   team,
   teamMember,
   track,
   user as userTable,
-  verification,
-  vote,
-  webhook,
-  webhookDelivery,
 } from "@/lib/db";
 import { id, secretToken } from "@/lib/ids";
+import { docToText } from "@/lib/rich-text";
+import { auth } from "@/lib/server/auth";
+import { type Bundle, importBundle } from "@/lib/server/bundle";
+import { hashToken } from "@/lib/server/identity";
 
-interface Fixtures {
-  event: { id: string; name: string; submissions_close: string };
-  tracks: { id: string; name: string }[];
-  judges: { id: string; name: string; email: string; tracks: string[] }[];
-  teams: { id: string; name: string; members: string[] }[];
-  projects: {
-    id: string;
-    team: string;
-    track: string;
-    title: string;
-    summary: string;
-    repo_url: string;
-    submitted_at: string;
-  }[];
-  scores: {
-    judge: string;
-    project: string;
-    criteria: Record<string, number>;
-    comment?: string;
-  }[];
-}
+const DAY = 24 * 60 * 60 * 1000;
 
-function loadFixtures(): Fixtures {
-  // Look next to the repo root (mounted into the container) and a couple of
-  // plausible fallbacks so the script works from the app dir or the repo root.
+function loadFixtures(): Bundle {
   const candidates = [
     process.env.FIXTURES_PATH,
     join(process.cwd(), "fixtures.json"),
     join(process.cwd(), "..", "..", "fixtures.json"),
-    "/app/fixtures.json",
   ].filter(Boolean) as string[];
-
   for (const path of candidates) {
     try {
-      return JSON.parse(readFileSync(path, "utf-8")) as Fixtures;
+      return JSON.parse(readFileSync(path, "utf-8")) as Bundle;
     } catch {}
   }
   throw new Error(`fixtures.json not found. Tried: ${candidates.join(", ")}`);
 }
 
-/** Create a user via Better Auth, then force role + return the id. */
-async function createUser(opts: {
+async function createUser(o: {
   email: string;
   name: string;
   password: string;
   role: string;
-}): Promise<string> {
+  username: string;
+  headline?: string;
+}) {
   const res = await auth.api.signUpEmail({
-    body: { email: opts.email, name: opts.name, password: opts.password },
+    body: { email: o.email, name: o.name, password: o.password },
   });
-  const userId = res.user.id;
-  await db.update(userTable).set({ role: opts.role }).where(eq(userTable.id, userId));
-  return userId;
+  await db
+    .update(userTable)
+    .set({ role: o.role, username: o.username, headline: o.headline ?? null, emailVerified: true })
+    .where(eq(userTable.id, res.user.id));
+  return res.user.id;
 }
 
-async function mintToken(userId: string, label: string): Promise<string> {
-  const token = secretToken();
-  await db.insert(apiToken).values({ id: id.apiToken(), token, userId, label });
+async function mintToken(userId: string, label: string) {
+  const token = `jz_${secretToken(40)}`;
+  await db.insert(apiToken).values({
+    id: id.apiToken(),
+    userId,
+    label,
+    tokenHash: hashToken(token),
+    prefix: token.slice(0, 9),
+  });
   return token;
 }
 
 async function truncateAll() {
-  // Order matters only without CASCADE; TRUNCATE ... CASCADE handles FKs.
-  const tables = [
-    auditLog,
-    certificate,
-    webhookDelivery,
-    webhook,
-    comment,
-    vote,
-    pairwiseVote,
-    score,
-    assignment,
-    judgeTracks,
-    project,
-    teamMember,
-    team,
-    rubricCriterion,
-    prize,
-    track,
-    event,
-    apiToken,
-    session,
-    account,
-    verification,
-    userTable,
-  ];
-  for (const t of tables) {
-    // biome-ignore lint/suspicious/noExplicitAny: drizzle table meta for name
-    const name = (t as any)[Symbol.for("drizzle:Name")] as string;
-    await db.execute(sql.raw(`TRUNCATE TABLE "${name}" RESTART IDENTITY CASCADE`));
+  const { rows } = await db.execute<{ tablename: string }>(
+    sql`select tablename from pg_tables where schemaname = 'public'`
+  );
+  if (rows.length) {
+    await db.execute(
+      sql.raw(
+        `TRUNCATE TABLE ${rows.map((r) => `"${r.tablename}"`).join(", ")} RESTART IDENTITY CASCADE`
+      )
+    );
   }
 }
 
+const doc = (...blocks: unknown[]) => ({ type: "doc" as const, content: blocks });
+const p = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
+const h = (level: number, text: string) => ({
+  type: "heading",
+  attrs: { level },
+  content: [{ type: "text", text }],
+});
+const ul = (...items: string[]) => ({
+  type: "bulletList",
+  content: items.map((t) => ({ type: "listItem", content: [p(t)] })),
+});
+
 async function main() {
-  const resetRequested = process.env.SEED_RESET === "1";
-  const existingUsers = await db.select({ id: userTable.id }).from(userTable).limit(1);
-
-  if (!resetRequested && existingUsers.length > 0) {
-    console.info("[seed] existing users detected; skipping reseed to preserve data");
-    return;
-  }
-
-  if (resetRequested) {
-    console.info("[seed] SEED_RESET=1 requested; clearing seeded data before bootstrap");
+  if (process.env.SEED_RESET === "1") {
+    console.info("[seed] SEED_RESET=1 — truncating all tables");
     await truncateAll();
-  }
-
-  const fx = loadFixtures();
-  console.info("[seed] loaded fixtures:", {
-    tracks: fx.tracks.length,
-    judges: fx.judges.length,
-    teams: fx.teams.length,
-    projects: fx.projects.length,
-    scores: fx.scores.length,
-  });
-
-  // ---- Event ----------------------------------------------------------
-  await db.insert(event).values({
-    id: fx.event.id,
-    name: fx.event.name,
-    slug: "sample-hack-2026",
-    description: "Seeded from the DOGFOOD 2026 fixture dataset.",
-    submissionsOpen: new Date("2026-02-20T00:00:00Z"),
-    submissionsClose: new Date(fx.event.submissions_close), // PAST — closes submissions
-    // Community voting is OPEN now so the T3 flow is demonstrable end to end in a
-    // freshly seeded portal (submissions are closed, voting is live — the natural
-    // post-deadline phase). The window is wide around "now".
-    votingOpen: new Date(Date.now() - 24 * 60 * 60 * 1000),
-    votingClose: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-    resultsPublished: false,
-  });
-
-  // ---- Tracks ---------------------------------------------------------
-  for (const t of fx.tracks) {
-    await db.insert(track).values({ id: t.id, eventId: fx.event.id, name: t.name });
-  }
-
-  // ---- Prizes ---------------------------------------------------------
-  const prizes = [
-    { name: "Grand Prize", amount: "$800", rank: 1 },
-    { name: "Runner-Up", amount: "$500", rank: 2 },
-    { name: "Third Place", amount: "$350", rank: 3 },
-  ];
-  for (const p of prizes) {
-    await db.insert(prize).values({
-      id: id.prize(),
-      eventId: fx.event.id,
-      name: p.name,
-      amount: p.amount,
-      rank: p.rank,
-    });
-  }
-
-  // ---- Rubric (the fixture's three criteria, weighted) ----------------
-  const rubric = [
-    { key: "functionality", label: "Functionality", weight: 0.4, position: 0 },
-    { key: "quality", label: "Code Quality", weight: 0.35, position: 1 },
-    { key: "innovation", label: "Innovation", weight: 0.25, position: 2 },
-  ];
-  for (const c of rubric) {
-    await db.insert(rubricCriterion).values({
-      id: id.criterion(),
-      eventId: fx.event.id,
-      key: c.key,
-      label: c.label,
-      weight: c.weight,
-      position: c.position,
-    });
-  }
-
-  // ---- Fixture judges as real users -----------------------------------
-  const judgeUserId = new Map<string, string>();
-  for (const j of fx.judges) {
-    const uid = await createUser({
-      email: j.email,
-      name: j.name,
-      password: "judge-password-123",
-      role: "judge",
-    });
-    judgeUserId.set(j.id, uid);
-    // Track eligibility: a track judge only reviews their tracks.
-    for (const trackId of j.tracks) {
-      await db
-        .insert(judgeTracks)
-        .values({ eventId: fx.event.id, judgeId: uid, trackId })
-        .onConflictDoNothing();
+  } else {
+    const [existing] = await db.select({ id: userTable.id }).from(userTable).limit(1);
+    if (existing) {
+      console.info("[seed] data already present; keeping it (set SEED_RESET=1 to reseed)");
+      await writeCheckerConfig();
+      return;
     }
   }
 
-  // ---- Teams + members ------------------------------------------------
-  // Fixture team members are emails; create a participant user per unique email.
-  const memberUserId = new Map<string, string>();
-  async function ensureMember(email: string): Promise<string> {
-    const existing = memberUserId.get(email);
-    if (existing) return existing;
-    const name = email.split("@")[0] ?? email;
-    const uid = await createUser({
-      email,
-      name,
-      password: "member-password-123",
-      role: "participant",
-    });
-    memberUserId.set(email, uid);
-    return uid;
-  }
-
-  for (const t of fx.teams) {
-    await db.insert(team).values({
-      id: t.id,
-      eventId: fx.event.id,
-      name: t.name,
-      inviteToken: secretToken(),
-    });
-    for (const [i, email] of t.members.entries()) {
-      const uid = await ensureMember(email);
-      await db
-        .insert(teamMember)
-        .values({ teamId: t.id, userId: uid, role: i === 0 ? "owner" : "member" })
-        .onConflictDoNothing();
-    }
-  }
-
-  // ---- Projects (all submitted) ---------------------------------------
-  for (const p of fx.projects) {
-    await db.insert(project).values({
-      id: p.id,
-      eventId: fx.event.id,
-      teamId: p.team,
-      trackId: p.track,
-      title: p.title,
-      tagline: p.summary,
-      summary: p.summary,
-      description: p.summary,
-      repoUrl: p.repo_url,
-      status: "submitted",
-      submittedAt: new Date(p.submitted_at),
-    });
-  }
-
-  // ---- Fixture scores -------------------------------------------------
-  // Map fixture judge ids to user ids; skip a score if its judge is unknown.
-  for (const s of fx.scores) {
-    const judgeUid = judgeUserId.get(s.judge);
-    if (!judgeUid) continue;
-    await db
-      .insert(score)
-      .values({
-        id: id.score(),
-        eventId: fx.event.id,
-        judgeId: judgeUid,
-        projectId: s.project,
-        criteria: s.criteria,
-        comment: s.comment ?? null,
-      })
-      .onConflictDoNothing();
-    // Every fixture score implies the judge was assigned that project.
-    await db
-      .insert(assignment)
-      .values({
-        id: id.assignment(),
-        eventId: fx.event.id,
-        judgeId: judgeUid,
-        projectId: s.project,
-        batch: 1,
-      })
-      .onConflictDoNothing();
-  }
-
-  // ---- Four well-known acceptance-checker users -----------------------
+  // ---- 1. Well-known accounts --------------------------------------------
+  await createUser({
+    email: "admin@juryza.test",
+    name: "Ada Admin",
+    password: "admin-password-123",
+    role: "admin",
+    username: "admin",
+    headline: "Platform administrator",
+  });
   const organizerId = await createUser({
     email: "organizer@juryza.test",
     name: "Olivia Organizer",
     password: "organizer-password-123",
     role: "organizer",
+    username: "organizer",
+    headline: "Runs Sample Hack",
   });
   const judgeAId = await createUser({
     email: "judge.a@juryza.test",
     name: "Judge A",
     password: "judge-a-password-123",
     role: "judge",
+    username: "judge_a",
+    headline: "Staff engineer",
   });
   const judgeBId = await createUser({
     email: "judge.b@juryza.test",
     name: "Judge B",
     password: "judge-b-password-123",
     role: "judge",
+    username: "judge_b",
+    headline: "Product designer",
   });
   const participantId = await createUser({
     email: "participant@juryza.test",
     name: "Pat Participant",
     password: "participant-password-123",
     role: "participant",
+    username: "participant",
+    headline: "Full-stack developer",
   });
+  await db
+    .update(userTable)
+    .set({
+      skills: ["TypeScript", "React", "Postgres"],
+      bio: "Building things on weekends.",
+      lookingForTeam: true,
+    })
+    .where(eq(userTable.id, participantId));
 
-  // Give judge_a and judge_b real assignments + scores so the peer-scores
-  // isolation check has something to protect.
-  const sampleProjects = fx.projects.slice(0, 3).map((p) => p.id);
-  const peerProjects = fx.projects.slice(3, 6).map((p) => p.id);
+  // ---- 2. The fixture event --------------------------------------------
+  const fx = loadFixtures();
+  const now = Date.now();
+  const fixtureBundle: Bundle = {
+    ...fx,
+    event: {
+      ...fx.event,
+      slug: "sample-hack-2026",
+      tagline: "The shared DOGFOOD 2026 dataset: forty projects, thirty judges, eight tracks.",
+      description:
+        "Seeded from the DOGFOOD 2026 fixtures. Submissions closed on the fixture's deadline; judging data includes the awkward cases on purpose — a judge who gave every project the same score, unfinished review batches and a duplicate submission.",
+      submissions_open: new Date(
+        new Date(fx.event.submissions_close).getTime() - 3 * DAY
+      ).toISOString(),
+      voting_open: new Date(now - DAY).toISOString(),
+      voting_close: new Date(now + 14 * DAY).toISOString(),
+      voting_access: "authenticated",
+      vote_budget: 16,
+      hue: 262,
+    },
+    rubric: [
+      {
+        key: "functionality",
+        label: "Functionality",
+        weight: 0.4,
+        description: "Does it work end to end?",
+      },
+      {
+        key: "quality",
+        label: "Code quality",
+        weight: 0.35,
+        description: "Is it well built and maintainable?",
+      },
+      {
+        key: "innovation",
+        label: "Innovation",
+        weight: 0.25,
+        description: "Is the idea or approach new?",
+      },
+    ],
+    prizes: [
+      { name: "Grand Prize", kind: "overall", amount: "$800", rank: 1 },
+      { name: "Runner-up", kind: "overall", amount: "$500", rank: 2 },
+      { name: "Third place", kind: "overall", amount: "$350", rank: 3 },
+      { name: "Community Choice", kind: "community", amount: "$100", rank: 1 },
+    ],
+    // Derive comparisons from the fixture scores so the pairwise leaderboard has
+    // signal on first boot: for each judge, adjacent projects in their own
+    // ordering ("higher beats lower"). Documented in JUDGING.md.
+    pairwise: Array.from(
+      fx.scores.reduce(
+        (m, s) => m.set(s.judge, [...(m.get(s.judge) ?? []), s]),
+        new Map<string, Bundle["scores"]>()
+      )
+    ).flatMap(([judge, list]) => {
+      const avg = (c: Record<string, number>) =>
+        Object.values(c).reduce((a, b) => a + b, 0) / Object.values(c).length;
+      const ordered = [...list].sort((a, b) => avg(b.criteria) - avg(a.criteria));
+      return ordered.slice(0, -1).flatMap((w, i) => {
+        const l = ordered[i + 1];
+        return l && avg(w.criteria) !== avg(l.criteria)
+          ? [{ judge, winner: w.project, loser: l.project }]
+          : [];
+      });
+    }),
+  };
+  const fixture = await importBundle(fixtureBundle, {
+    createdBy: organizerId,
+    visibility: "published",
+    passwordFor: (email) =>
+      fx.judges.some((j) => j.email === email) ? "judge-password-123" : "member-password-123",
+  });
+  console.info(
+    "[seed] fixture event:",
+    fixture.slug,
+    fixture.created,
+    fixture.skipped.length ? `${fixture.skipped.length} skipped` : ""
+  );
 
-  for (const pid of sampleProjects) {
-    await db
-      .insert(assignment)
-      .values({
-        id: id.assignment(),
-        eventId: fx.event.id,
-        judgeId: judgeAId,
-        projectId: pid,
-        batch: 1,
-      })
-      .onConflictDoNothing();
-    await db
-      .insert(score)
-      .values({
-        id: id.score(),
-        eventId: fx.event.id,
-        judgeId: judgeAId,
-        projectId: pid,
-        criteria: { functionality: 4, quality: 4, innovation: 3 },
-        comment: "Seeded score for judge A.",
-      })
-      .onConflictDoNothing();
-  }
-  for (const pid of peerProjects) {
-    await db
-      .insert(assignment)
-      .values({
-        id: id.assignment(),
-        eventId: fx.event.id,
-        judgeId: judgeBId,
-        projectId: pid,
-        batch: 1,
-      })
-      .onConflictDoNothing();
-    await db
-      .insert(score)
-      .values({
-        id: id.score(),
-        eventId: fx.event.id,
-        judgeId: judgeBId,
-        projectId: pid,
-        criteria: { functionality: 3, quality: 5, innovation: 4 },
-        comment: "Seeded score for judge B.",
-      })
-      .onConflictDoNothing();
-  }
-
-  // ---- Seed pairwise comparisons (T2 bonus demo) ----------------------
-  // Derive comparisons from the fixture scores so the Bradley–Terry ranking has
-  // signal on first boot: for each fixture judge, order the projects they scored
-  // by weighted raw score and record "higher beats lower" for adjacent pairs.
-  const scoresByJudge = new Map<string, { project: string; raw: number }[]>();
-  for (const s of fx.scores) {
-    const judgeUid = judgeUserId.get(s.judge);
-    if (!judgeUid) continue;
-    const vals = Object.values(s.criteria);
-    const raw = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-    const list = scoresByJudge.get(judgeUid) ?? [];
-    list.push({ project: s.project, raw });
-    scoresByJudge.set(judgeUid, list);
-  }
-  for (const [judgeUid, list] of scoresByJudge) {
-    const ordered = [...list].sort((a, b) => b.raw - a.raw);
-    for (let i = 0; i + 1 < ordered.length; i++) {
-      const winner = ordered[i];
-      const loser = ordered[i + 1];
-      if (!winner || !loser || winner.raw === loser.raw) continue;
+  // judge_a and judge_b sit on the fixture panel with real, disjoint work, so the
+  // cross-judge isolation check has something to protect.
+  const fxProjects = fx.projects.map((x) => x.id);
+  for (const [judgeId, projects, marks] of [
+    [judgeAId, fxProjects.slice(0, 3), { functionality: 4, quality: 4, innovation: 3 }],
+    [judgeBId, fxProjects.slice(3, 6), { functionality: 3, quality: 5, innovation: 4 }],
+  ] as const) {
+    await db.insert(eventJudge).values({ eventId: fixture.eventId, userId: judgeId, trackIds: [] });
+    for (const projectId of projects) {
       await db
-        .insert(pairwiseVote)
+        .insert(assignment)
+        .values({ id: id.assignment(), eventId: fixture.eventId, judgeId, projectId })
+        .onConflictDoNothing();
+      await db
+        .insert(score)
         .values({
-          id: id.pairwise(),
-          eventId: fx.event.id,
-          judgeId: judgeUid,
-          winnerId: winner.project,
-          loserId: loser.project,
+          id: id.score(),
+          eventId: fixture.eventId,
+          judgeId,
+          projectId,
+          criteria: marks,
+          comment: "Seeded review.",
         })
         .onConflictDoNothing();
     }
+    // One unscored assignment each, so the judge console has work to do.
+    await db
+      .insert(assignment)
+      .values({
+        id: id.assignment(),
+        eventId: fixture.eventId,
+        judgeId,
+        projectId: fxProjects[judgeId === judgeAId ? 10 : 11] as string,
+      })
+      .onConflictDoNothing();
   }
 
-  // ---- Bearer tokens --------------------------------------------------
-  const orgToken = await mintToken(organizerId, "acceptance: organizer");
-  const judgeAToken = await mintToken(judgeAId, "acceptance: judge_a");
-  const judgeBToken = await mintToken(judgeBId, "acceptance: judge_b");
-  const participantToken = await mintToken(participantId, "acceptance: participant");
+  // ---- 3. A live sandbox event -----------------------------------------
+  const sandboxId = id.event();
+  await db.insert(event).values({
+    id: sandboxId,
+    slug: "open-build-2026",
+    name: "Open Build 2026",
+    tagline: "A live sandbox event — submissions are open. Try the whole lifecycle.",
+    description:
+      "Form a team, write up your project, submit it, and watch judging and voting happen.",
+    content: doc(
+      h(2, "About"),
+      p(
+        "Open Build is a sandbox event seeded so you can try every part of Juryza without editing any dates: form a team, write your project up in the editor, submit it, then switch accounts to judge it."
+      ),
+      h(2, "What to build"),
+      ul(
+        "Tools that make open-source maintainers' lives easier",
+        "Anything that runs offline, on one machine",
+        "Something you would still use next month"
+      ),
+      h(2, "Schedule"),
+      p(
+        "Submissions close ten days after the seed ran. Judging runs for four days after that, then community voting opens."
+      )
+    ),
+    rules: doc(
+      ul(
+        "Teams of one to four people.",
+        "All code written during the event window. Libraries and AI tools are fine.",
+        "One project per team. You can edit it until the deadline.",
+        "Judges never review a project from their own team."
+      )
+    ),
+    mode: "hybrid",
+    location: "Online + Berlin",
+    hue: 160,
+    visibility: "published",
+    submissionsOpen: new Date(now - 2 * DAY),
+    submissionsClose: new Date(now + 10 * DAY),
+    judgingClose: new Date(now + 14 * DAY),
+    votingOpen: new Date(now + 10 * DAY),
+    votingClose: new Date(now + 14 * DAY),
+    votingAccess: "open",
+    voteBudget: 25,
+    createdBy: organizerId,
+  });
+  const tracks = [
+    ["Developer tools", "Make building software better."],
+    ["Climate & energy", "Measure, reduce, adapt."],
+    ["Civic tech", "Tools for communities and public services."],
+    ["Open track", "Anything else you are excited about."],
+  ] as const;
+  const trackIds = tracks.map(() => id.track());
+  await db.insert(track).values(
+    tracks.map(([name, description], position) => ({
+      id: trackIds[position] as string,
+      eventId: sandboxId,
+      name,
+      description,
+      position,
+    }))
+  );
+  await db.insert(rubricCriterion).values(
+    [
+      {
+        key: "impact",
+        label: "Impact",
+        description: "Does it solve a real problem for real people?",
+        weight: 0.3,
+      },
+      {
+        key: "execution",
+        label: "Execution",
+        description: "Does it work? Is it well built?",
+        weight: 0.35,
+      },
+      {
+        key: "innovation",
+        label: "Innovation",
+        description: "Is the idea or approach new?",
+        weight: 0.2,
+      },
+      {
+        key: "presentation",
+        label: "Presentation",
+        description: "Is it clearly explained and demoed?",
+        weight: 0.15,
+      },
+    ].map((c, position) => ({ ...c, id: id.criterion(), eventId: sandboxId, position }))
+  );
+  await db.insert(prize).values([
+    {
+      id: id.prize(),
+      eventId: sandboxId,
+      kind: "overall",
+      name: "Best overall",
+      amount: "$1,000",
+      rank: 1,
+    },
+    {
+      id: id.prize(),
+      eventId: sandboxId,
+      kind: "overall",
+      name: "Runner-up",
+      amount: "$500",
+      rank: 2,
+    },
+    {
+      id: id.prize(),
+      eventId: sandboxId,
+      kind: "track",
+      trackId: trackIds[0],
+      name: "Best developer tool",
+      amount: "$250",
+      rank: 1,
+    },
+    {
+      id: id.prize(),
+      eventId: sandboxId,
+      kind: "community",
+      name: "People's choice",
+      amount: "$150",
+      rank: 1,
+    },
+  ]);
+  for (const judgeId of [judgeAId, judgeBId]) {
+    await db.insert(eventJudge).values({ eventId: sandboxId, userId: judgeId, trackIds: [] });
+  }
+  // The participant has a team and a draft, to show the editor on first login.
+  const teamId = id.team();
+  await db.insert(team).values({
+    id: teamId,
+    eventId: sandboxId,
+    name: "Night Owls",
+    description: "Two devs and a designer who work best after midnight.",
+    lookingForMembers: true,
+    inviteToken: secretToken(24),
+  });
+  await db.insert(teamMember).values({ teamId, userId: participantId, role: "owner" });
+  await db.insert(registration).values({ eventId: sandboxId, userId: participantId });
+  const draft = doc(
+    h(2, "The problem"),
+    p("Maintainers spend their evenings triaging duplicate issues."),
+    h(2, "What we built"),
+    p("Issue Radar clusters incoming issues by similarity and suggests the canonical one."),
+    {
+      type: "taskList",
+      content: [
+        { type: "taskItem", attrs: { checked: true }, content: [p("Clustering prototype")] },
+        { type: "taskItem", attrs: { checked: false }, content: [p("GitHub app integration")] },
+        { type: "taskItem", attrs: { checked: false }, content: [p("Record the demo video")] },
+      ],
+    }
+  );
+  await db.insert(project).values({
+    id: id.project(),
+    eventId: sandboxId,
+    teamId,
+    trackId: trackIds[0],
+    title: "Issue Radar",
+    tagline: "Finds the duplicate before you do.",
+    content: draft,
+    description: docToText(draft),
+    techTags: ["TypeScript", "Postgres"],
+    status: "draft",
+  });
 
-  // ---- Write .dogfood.toml so the checker runs with zero manual steps -
+  await writeCheckerConfig();
+}
+
+/**
+ * Mint fresh API tokens for the four checker accounts and write
+ * `.dogfood.toml`. Runs on every boot — also when existing data is kept — so
+ * the file always holds working credentials. Old checker tokens are revoked.
+ */
+async function writeCheckerConfig() {
+  const accounts = await db
+    .select({ id: userTable.id, username: userTable.username })
+    .from(userTable)
+    .where(inArray(userTable.username, ["organizer", "judge_a", "judge_b", "participant"]));
+  const idOf = (username: string) => {
+    const found = accounts.find((a) => a.username === username);
+    if (!found)
+      throw new Error(`checker account "${username}" is missing — reseed with SEED_RESET=1`);
+    return found.id;
+  };
+  await db.delete(apiToken).where(like(apiToken.label, "acceptance: %"));
+  const tokens = {
+    organizer: await mintToken(idOf("organizer"), "acceptance: organizer"),
+    judge_a: await mintToken(idOf("judge_a"), "acceptance: judge_a"),
+    judge_b: await mintToken(idOf("judge_b"), "acceptance: judge_b"),
+    participant: await mintToken(idOf("participant"), "acceptance: participant"),
+  };
+
   const baseUrl = process.env.PORTAL_BASE_URL ?? "http://localhost:8080";
-  const dogfoodToml = `# Generated by the Juryza seed script on boot.
-# The acceptance checker (run.py) reads this to know where things are and which
-# header proves each role. Regenerated on every \`docker compose up\`.
+  const toml = `# Generated by the Juryza seed on boot (apps/juryza/src/lib/db/seed.ts).
+# The acceptance checker reads this. Tokens are re-minted on every boot.
 
 [portal]
 base_url = "${baseUrl}"
 
 [tiers]
 claimed = ["T1", "T2", "T3", "T4"]
-pitch = "Self-hostable, API-first hackathon submission & judging portal: backend-enforced role isolation, documented z-score + Bradley-Terry judging, quadratic voting, OpenAPI, webhooks, verifiable certificates."
+pitch = "Self-hosted hackathon platform: multi-event, backend-enforced judge isolation, documented z-score + Bradley-Terry judging, quadratic voting, Notion-style write-ups, REST API + webhooks + signed certificates."
 
 [auth]
-organizer   = "Authorization: Bearer ${orgToken}"
-judge_a     = "Authorization: Bearer ${judgeAToken}"
-judge_b     = "Authorization: Bearer ${judgeBToken}"
-participant = "Authorization: Bearer ${participantToken}"
+organizer   = "Authorization: Bearer ${tokens.organizer}"
+judge_a     = "Authorization: Bearer ${tokens.judge_a}"
+judge_b     = "Authorization: Bearer ${tokens.judge_b}"
+participant = "Authorization: Bearer ${tokens.participant}"
 
 [routes]
-gallery      = "/api/gallery"
-submit       = "/api/projects"
+gallery      = "/api/events/sample-hack-2026/projects"
+submit       = "/api/events/sample-hack-2026/projects"
 judge_scores = "/api/judge/scores"
 peer_scores  = "/api/judge/scores?judge=judge_a"
-csv_export   = "/api/organizer/export.csv"
+csv_export   = "/api/events/sample-hack-2026/export?dataset=results"
 `;
-  const tomlCandidates = [
+  for (const path of [
     process.env.DOGFOOD_TOML_PATH,
     join(process.cwd(), "..", "..", ".dogfood.toml"),
-    join(process.cwd(), ".dogfood.toml"),
-    "/app/.dogfood.toml",
-  ].filter(Boolean) as string[];
-  for (const path of tomlCandidates) {
+  ].filter(Boolean) as string[]) {
     try {
-      writeFileSync(path, dogfoodToml, "utf-8");
+      writeFileSync(path, toml, "utf-8");
       console.info(`[seed] wrote ${path}`);
       break;
     } catch {}
   }
 
-  // ---- Print the headers for .dogfood.toml ----------------------------
-  const banner = "=".repeat(64);
-  console.info(`\n${banner}`);
-  console.info("Juryza seeded. .dogfood.toml [auth] headers:");
-  console.info(banner);
-  console.info(`organizer   = "Authorization: Bearer ${orgToken}"`);
-  console.info(`judge_a     = "Authorization: Bearer ${judgeAToken}"`);
-  console.info(`judge_b     = "Authorization: Bearer ${judgeBToken}"`);
-  console.info(`participant = "Authorization: Bearer ${participantToken}"`);
-  console.info(banner);
-  console.info("Test logins (email / password) for the UI:");
-  console.info("  organizer    organizer@juryza.test / organizer-password-123");
-  console.info("  judge A      judge.a@juryza.test   / judge-a-password-123");
-  console.info("  judge B      judge.b@juryza.test   / judge-b-password-123");
-  console.info("  participant  participant@juryza.test / participant-password-123");
-  console.info(`${banner}\n`);
+  const line = "=".repeat(64);
+  console.info(`\n${line}\nJuryza is seeded. Sign in at ${baseUrl}/login with:\n${line}`);
+  console.info("  admin        admin@juryza.test        admin-password-123");
+  console.info("  organizer    organizer@juryza.test    organizer-password-123");
+  console.info("  judge A      judge.a@juryza.test      judge-a-password-123");
+  console.info("  judge B      judge.b@juryza.test      judge-b-password-123");
+  console.info("  participant  participant@juryza.test  participant-password-123");
+  console.info(`${line}\n`);
 }
 
 main()

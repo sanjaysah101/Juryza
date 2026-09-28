@@ -1,91 +1,69 @@
 import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 
-import { forbidden, isResponse, requireRole, resolveIdentity, unauthorized } from "@/lib/api-auth";
-import { audit } from "@/lib/audit";
-import { assignment, db, project, rubricCriterion, score } from "@/lib/db";
-import { getActiveEvent } from "@/lib/events";
-import { id as newId } from "@/lib/ids";
+import { assignment, db, event, eventJudge, project, rubricCriterion, score } from "@/lib/db";
+import { id } from "@/lib/ids";
 import { rawScore } from "@/lib/scoring";
+import { audit } from "@/lib/server/audit";
+import { findEvent } from "@/lib/server/events";
+import { badRequest, forbidden, handle, notFound, readBody } from "@/lib/server/http";
+import type { Identity } from "@/lib/server/identity";
+import { requireUser } from "@/lib/server/identity";
+import { dispatch } from "@/lib/server/webhooks";
 
 /**
- * A judge's scores — and the role-isolation boundary the acceptance suite cares
- * about most (25% of the score rides on getting this right in the BACKEND).
+ * A judge's own scores — the role-isolation boundary.
  *
- * Three behaviours the checker verifies:
- *
- *  1. `GET` as judge_a → 200. A judge reads their OWN scores.
- *  2. `GET ?judge=judge_a` as judge_b → 403. The `judge` parameter names WHOSE
- *     scores to return. Returning another judge's scores to anyone but that
- *     judge is the leak; we refuse it here, at the API, before a row is read.
- *  3. `GET` as participant → 403. A participant is not a judge.
- *
- * The refusal is a backend authorization decision, not a hidden button: the
- * handler compares the requested judge to the authenticated judge and returns
- * 403 on mismatch. There is no code path that returns judge A's rows to judge B.
- *
- * `?judge=` accepts either a user id or one of the well-known acceptance aliases
- * ("judge_a"/"judge_b"), because the checker sends the alias from `.dogfood.toml`
- * rather than an internal id.
+ * GET  /api/judge/scores[?event=<slug|id>][&judge=<username|id>]
+ *      Returns the caller's scores. `judge` names whose scores to return, and
+ *      the only accepted value is the caller: asking for anyone else is a 403
+ *      decided here, before a row is read — there is no code path that returns
+ *      judge A's rows to judge B. Callers who sit on no judging panel (e.g. a
+ *      participant) get 403 as well.
+ * POST /api/judge/scores { projectId, criteria, comment }
+ *      Save (or update) the caller's score. Only for a project assigned to the
+ *      caller, only with marks for the event's rubric, and only while judging
+ *      is open (before `judgingClose` and before results are published).
  */
 
-/**
- * Map the acceptance-suite aliases to the authenticated judge. The checker only
- * ever asks for "judge_a"; it sends that request as judge_b to prove isolation.
- * We treat the alias as "the judge whose bearer token is labelled that" — but
- * crucially we resolve it to a concrete rule: the request is allowed ONLY if the
- * requested judge resolves to the caller themselves. So we compare the requested
- * selector against the caller's identity, and any selector that is not the
- * caller is refused.
- */
-function requestedJudgeMatchesCaller(requested: string | null, callerId: string): boolean {
-  // No selector → the caller is asking for their own scores. Always allowed.
-  if (!requested) return true;
-  // A selector that equals the caller's own user id is their own scores.
-  if (requested === callerId) return true;
-  // Anything else — a different id, or an alias like "judge_a" that is not the
-  // caller — is a request for someone else's scores. Refuse.
-  return false;
+async function assertJudge(me: Identity) {
+  if (me.role === "judge") return;
+  const [panel] = await db
+    .select({ eventId: eventJudge.eventId })
+    .from(eventJudge)
+    .where(eq(eventJudge.userId, me.userId))
+    .limit(1);
+  if (!panel) throw forbidden("Only judges can read judge scores");
 }
 
-export async function GET(req: NextRequest) {
-  const identity = await resolveIdentity(req);
-  if (!identity) return unauthorized();
-
-  // Only judges have scores of their own. Participants/visitors are refused;
-  // organizers use the organizer endpoints, not this one (kept strict so the
-  // role boundary is unambiguous and testable).
-  if (identity.role !== "judge") {
-    return forbidden("Only judges can read judge scores");
-  }
+export const GET = handle(async (req: NextRequest) => {
+  const me = await requireUser(req);
+  await assertJudge(me);
 
   const url = new URL(req.url);
   const requested = url.searchParams.get("judge");
-  if (!requestedJudgeMatchesCaller(requested, identity.userId)) {
+  if (requested && requested !== me.userId && requested !== me.username) {
     await audit({
-      actor: identity,
+      actor: me,
       action: "judge.scores.denied",
       target: requested,
       detail: { reason: "attempted to read another judge's scores" },
-      ipAddress: req.headers.get("x-forwarded-for"),
+      req,
     });
-    return forbidden("A judge may only read their own scores");
+    throw forbidden("A judge may only read their own scores");
   }
 
-  const activeEvent = await getActiveEvent();
-  if (!activeEvent) return NextResponse.json({ scores: [] });
-
-  const rubric = await db
-    .select({ key: rubricCriterion.key, weight: rubricCriterion.weight })
-    .from(rubricCriterion)
-    .where(eq(rubricCriterion.eventId, activeEvent.id));
+  const eventRef = url.searchParams.get("event");
+  const scopedEvent = eventRef ? await findEvent(eventRef) : null;
+  if (eventRef && !scopedEvent) throw notFound("Event not found");
 
   const rows = await db
     .select({
       id: score.id,
+      eventId: score.eventId,
+      eventSlug: event.slug,
       projectId: score.projectId,
       projectTitle: project.title,
       criteria: score.criteria,
@@ -94,80 +72,91 @@ export async function GET(req: NextRequest) {
     })
     .from(score)
     .innerJoin(project, eq(project.id, score.projectId))
-    .where(and(eq(score.eventId, activeEvent.id), eq(score.judgeId, identity.userId)));
+    .innerJoin(event, eq(event.id, score.eventId))
+    .where(
+      and(eq(score.judgeId, me.userId), scopedEvent ? eq(score.eventId, scopedEvent.id) : undefined)
+    );
 
-  const scores = rows.map((r) => ({ ...r, raw: rawScore(r.criteria, rubric) }));
-  return NextResponse.json({ judgeId: identity.userId, scores });
-}
+  const eventIds = [...new Set(rows.map((r) => r.eventId))];
+  const rubrics = eventIds.length
+    ? await db
+        .select({
+          eventId: rubricCriterion.eventId,
+          key: rubricCriterion.key,
+          weight: rubricCriterion.weight,
+        })
+        .from(rubricCriterion)
+        .where(inArray(rubricCriterion.eventId, eventIds))
+    : [];
 
-/**
- * Submit or update the caller's score for a project (T2).
- *
- * A judge may only score a project assigned to them — checked against the
- * `assignment` table, another backend-enforced isolation rule. Re-scoring the
- * same project updates the existing row (unique on judge+project).
- */
-const scoreSchema = z.object({
-  projectId: z.string().min(1),
-  criteria: z.record(z.string(), z.number().min(0).max(5)),
-  comment: z.string().optional(),
+  return {
+    judge: { id: me.userId, username: me.username, name: me.name },
+    scores: rows.map((r) => ({
+      ...r,
+      weighted: rawScore(
+        r.criteria,
+        rubrics.filter((c) => c.eventId === r.eventId)
+      ),
+    })),
+  };
 });
 
-export async function POST(req: NextRequest) {
-  const identity = await requireRole(req, { exact: "judge" });
-  if (isResponse(identity)) return identity;
+const body = z.object({
+  projectId: z.string().min(1),
+  criteria: z.record(z.string(), z.number().int().min(1).max(5)),
+  comment: z.string().trim().max(4000).nullish(),
+});
 
-  const activeEvent = await getActiveEvent();
-  if (!activeEvent) return NextResponse.json({ error: "No active event" }, { status: 404 });
+export const POST = handle(async (req: NextRequest) => {
+  const me = await requireUser(req);
+  const b = await readBody(req, body);
 
-  const parsed = scoreSchema.safeParse(await req.json().catch(() => ({})));
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid body", issues: parsed.error.issues },
-      { status: 400 }
-    );
-  }
-  const b = parsed.data;
-
-  // Isolation: a judge can only score a project assigned to them.
-  const assigned = await db
-    .select({ id: assignment.id })
+  const [assigned] = await db
+    .select({ event })
     .from(assignment)
-    .where(and(eq(assignment.judgeId, identity.userId), eq(assignment.projectId, b.projectId)))
+    .innerJoin(event, eq(event.id, assignment.eventId))
+    .where(and(eq(assignment.judgeId, me.userId), eq(assignment.projectId, b.projectId)))
     .limit(1);
-  if (assigned.length === 0) {
-    return forbidden("That project is not assigned to you");
-  }
+  if (!assigned) throw forbidden("That project is not assigned to you");
+  const e = assigned.event;
 
-  const existing = await db
-    .select({ id: score.id })
-    .from(score)
-    .where(and(eq(score.judgeId, identity.userId), eq(score.projectId, b.projectId)))
-    .limit(1);
+  if (e.resultsPublished) throw forbidden("Results are published; scores are final");
+  if (e.judgingClose && Date.now() >= e.judgingClose.getTime())
+    throw forbidden("Judging has closed for this event");
 
-  if (existing[0]) {
-    await db
-      .update(score)
-      .set({ criteria: b.criteria, comment: b.comment ?? null, updatedAt: new Date() })
-      .where(eq(score.id, existing[0].id));
-  } else {
-    await db.insert(score).values({
-      id: newId.score(),
-      eventId: activeEvent.id,
-      judgeId: identity.userId,
+  const rubric = await db
+    .select({ key: rubricCriterion.key })
+    .from(rubricCriterion)
+    .where(eq(rubricCriterion.eventId, e.id));
+  const keys = new Set(rubric.map((c) => c.key));
+  const unknown = Object.keys(b.criteria).filter((k) => !keys.has(k));
+  const missing = [...keys].filter((k) => b.criteria[k] === undefined);
+  if (unknown.length) throw badRequest(`Unknown criteria: ${unknown.join(", ")}`);
+  if (missing.length) throw badRequest(`Score every criterion (missing: ${missing.join(", ")})`);
+
+  await db
+    .insert(score)
+    .values({
+      id: id.score(),
+      eventId: e.id,
+      judgeId: me.userId,
       projectId: b.projectId,
       criteria: b.criteria,
       comment: b.comment ?? null,
+    })
+    .onConflictDoUpdate({
+      target: [score.judgeId, score.projectId],
+      set: { criteria: b.criteria, comment: b.comment ?? null, updatedAt: new Date() },
     });
-  }
 
   await audit({
-    eventId: activeEvent.id,
-    actor: identity,
+    eventId: e.id,
+    actor: me,
     action: "score.saved",
     target: b.projectId,
-    ipAddress: req.headers.get("x-forwarded-for"),
+    detail: { criteria: b.criteria },
+    req,
   });
-
-  return NextResponse.json({ ok: true });
-}
+  dispatch("score.saved", { projectId: b.projectId, judgeId: me.userId }, e.id);
+  return { ok: true };
+});

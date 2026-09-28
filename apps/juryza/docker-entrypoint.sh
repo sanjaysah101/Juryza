@@ -11,7 +11,7 @@ set -e
 
 echo "[entrypoint] waiting for postgres at ${DATABASE_URL:-<unset>} ..."
 tries=0
-until bun run --bun -e "const{Client}=require('pg');const c=new Client(process.env.DATABASE_URL);c.connect().then(()=>{c.end();process.exit(0)}).catch(()=>process.exit(1))" 2>/dev/null; do
+until bun -e "const{Client}=require('pg');const c=new Client(process.env.DATABASE_URL);c.connect().then(()=>{c.end();process.exit(0)}).catch(()=>process.exit(1))" 2>/dev/null; do
   tries=$((tries + 1))
   if [ "$tries" -ge 60 ]; then
     echo "[entrypoint] postgres did not become ready in time" >&2

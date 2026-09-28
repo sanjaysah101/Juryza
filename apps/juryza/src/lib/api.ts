@@ -1,17 +1,14 @@
 /**
- * Tiny fetch wrapper for first-party UI calls.
+ * Fetch wrapper for the app's own pages. The browser talks to the same REST
+ * API as any other client (session cookie instead of a bearer token), which is
+ * what keeps "every UI action is an API call" true.
  *
- * The browser talks to the same-origin API using the Better Auth session
- * cookie, so no Authorization header is needed here — `credentials: "include"`
- * carries the cookie. Bearer tokens are for the acceptance checker and the T4
- * programmatic API, not the app's own pages.
- *
- * Throws `ApiError` on a non-2xx so TanStack Query surfaces it in `error`.
+ * Throws `ApiError` on a non-2xx so TanStack Query surfaces it as `error`.
  */
 
 export class ApiError extends Error {
-  status: number;
-  body: unknown;
+  readonly status: number;
+  readonly body: unknown;
   constructor(status: number, message: string, body: unknown) {
     super(message);
     this.name = "ApiError";
@@ -20,40 +17,34 @@ export class ApiError extends Error {
   }
 }
 
-async function parse(res: Response): Promise<unknown> {
-  const text = await res.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
-
-export async function apiFetch<T = unknown>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
-    ...init,
+    method,
     credentials: "include",
-    headers: {
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
-      ...init?.headers,
-    },
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const body = await parse(res);
+  const text = await res.text();
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
   if (!res.ok) {
     const message =
-      (body && typeof body === "object" && "error" in body
-        ? String((body as { error: unknown }).error)
-        : null) ?? `Request failed (${res.status})`;
-    throw new ApiError(res.status, message, body);
+      data && typeof data === "object" && "error" in data
+        ? String((data as { error: unknown }).error)
+        : `Request failed (${res.status})`;
+    throw new ApiError(res.status, message, data);
   }
-  return body as T;
+  return data as T;
 }
 
 export const api = {
-  get: <T>(path: string) => apiFetch<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    apiFetch<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
-  patch: <T>(path: string, body?: unknown) =>
-    apiFetch<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined }),
+  get: <T>(path: string) => request<T>("GET", path),
+  post: <T>(path: string, body: unknown = {}) => request<T>("POST", path, body),
+  put: <T>(path: string, body: unknown) => request<T>("PUT", path, body),
+  patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
+  delete: <T>(path: string) => request<T>("DELETE", path),
 };

@@ -4,30 +4,42 @@ import { ArrowLeft, Compass } from "lucide-react";
 
 import { Button } from "@juryza/ui/components/ui/button";
 
+import { Logo } from "@/components/brand";
+
+/** App-wide 404: a friendly dead end with a way back. */
 export default function NotFound() {
   return (
-    <main className="mx-auto flex w-full max-w-xl flex-1 items-center justify-center px-6 py-20">
-      <div className="border-border/70 bg-card w-full rounded-2xl border p-8 text-center shadow-sm">
-        <div className="bg-primary/10 text-primary mx-auto mb-4 grid size-12 place-items-center rounded-full">
-          <Compass className="size-6" />
-        </div>
-        <p className="text-primary text-sm font-medium uppercase tracking-[0.18em]">Page missing</p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-          This route doesn’t exist yet.
-        </h1>
-        <p className="text-muted-foreground mt-3 text-sm">
-          The app is fully wired for the core hackathon flow, but this link was stale or incomplete.
-          Head back to the main experience.
+    <div className="relative isolate flex min-h-svh flex-col items-center justify-center gap-8 overflow-hidden px-4 py-16 text-center">
+      <div
+        aria-hidden
+        className="absolute inset-0 -z-10 opacity-50 [mask-image:radial-gradient(ellipse_at_center,black_20%,transparent_70%)]"
+        style={{
+          backgroundImage:
+            "linear-gradient(to right, var(--border) 1px, transparent 1px), linear-gradient(to bottom, var(--border) 1px, transparent 1px)",
+          backgroundSize: "40px 40px",
+        }}
+      />
+      <Logo />
+      <div className="flex flex-col items-center gap-3">
+        <p className="from-primary to-chart-2 bg-linear-to-r bg-clip-text font-mono text-7xl font-semibold tracking-tighter text-transparent sm:text-8xl">
+          404
         </p>
-        <div className="mt-6 flex justify-center gap-3">
-          <Button nativeButton={false} render={<Link href="/" />}>
-            <ArrowLeft className="size-4" /> Home
-          </Button>
-          <Button variant="outline" nativeButton={false} render={<Link href="/gallery" />}>
-            Browse gallery
-          </Button>
-        </div>
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          This page didn't make the shortlist
+        </h1>
+        <p className="text-muted-foreground max-w-md text-pretty">
+          The link may be broken, or the page may have moved. Events that aren't published yet are
+          only visible to their organizers.
+        </p>
       </div>
-    </main>
+      <div className="flex flex-wrap items-center justify-center gap-3">
+        <Button variant="outline" nativeButton={false} render={<Link href="/" />}>
+          <ArrowLeft /> Back home
+        </Button>
+        <Button nativeButton={false} render={<Link href="/events" />}>
+          <Compass /> Browse events
+        </Button>
+      </div>
+    </div>
   );
 }

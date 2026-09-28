@@ -4,19 +4,23 @@
  * Two families of tables live here:
  *
  * 1. **Better Auth tables** (`user`, `session`, `account`, `verification`) —
- *    owned by Better Auth's Drizzle adapter. Their columns match what the admin
- *    plugin expects. We add a `role` column to `user` for the five-role model.
- * 2. **Domain tables** (events, tracks, prizes, teams, projects, judge
- *    assignments, scores, votes, comments) — the hackathon platform itself.
+ *    owned by Better Auth's Drizzle adapter. `user` carries the platform role
+ *    (admin plugin) plus the public profile fields.
+ * 2. **Domain tables** — events and everything scoped to one: tracks, prizes,
+ *    rubric, registrations, teams, projects, judges, assignments, scores,
+ *    pairwise comparisons, community votes, comments, announcements, audit.
  *
- * Every id is a text ULID/nanoid string, matching the fixture shape (`"evt_01"`,
- * `"prj_01"`, …) so seeded rows can keep their original identifiers and foreign
- * keys line up with the acceptance checker's expectations.
+ * Every id is a prefixed text id (`evt_…`, `prj_…`) so fixture rows keep their
+ * original identifiers and a value read from a log or CSV says what it is.
+ * Rich text (event overview, rules, project write-ups) is stored as the
+ * editor's ProseMirror JSON and rendered through a fixed node schema, so user
+ * content never reaches the page as raw HTML.
  */
 
 import { relations } from "drizzle-orm";
 import {
   boolean,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -26,6 +30,14 @@ import {
   timestamp,
   unique,
 } from "drizzle-orm/pg-core";
+
+/** A ProseMirror/Tiptap document. Opaque to the database. */
+export type RichDoc = { type: "doc"; content?: unknown[] };
+
+const createdAt = () =>
+  timestamp("created_at")
+    .$defaultFn(() => new Date())
+    .notNull();
 
 /* ------------------------------------------------------------------ */
 /* Better Auth core tables                                            */
@@ -39,15 +51,23 @@ export const user = pgTable("user", {
     .$defaultFn(() => false)
     .notNull(),
   image: text("image"),
-  // Five-role model from the spec: visitor | participant | judge | organizer | admin.
-  // Managed by the Better Auth admin plugin; enforced in the backend.
+  // Platform role: participant | judge | organizer | admin. A visitor is an
+  // unauthenticated request. Enforced in the backend on every route.
   role: text("role").default("participant").notNull(),
   banned: boolean("banned").default(false),
   banReason: text("ban_reason"),
   banExpires: timestamp("ban_expires"),
-  createdAt: timestamp("created_at")
-    .$defaultFn(() => new Date())
-    .notNull(),
+  // Public profile. `username` is the stable handle used in profile URLs and
+  // in API selectors such as `/api/judge/scores?judge=<username>`.
+  username: text("username").unique(),
+  headline: text("headline"),
+  bio: text("bio"),
+  location: text("location"),
+  websiteUrl: text("website_url"),
+  githubUrl: text("github_url"),
+  skills: jsonb("skills").$type<string[]>().default([]).notNull(),
+  lookingForTeam: boolean("looking_for_team").default(false).notNull(),
+  createdAt: createdAt(),
   updatedAt: timestamp("updated_at")
     .$defaultFn(() => new Date())
     .notNull(),
@@ -95,45 +115,59 @@ export const verification = pgTable("verification", {
 });
 
 /**
- * API tokens — the bearer credentials the acceptance checker uses.
- *
- * The checker never logs in; it attaches a static `Authorization: Bearer <token>`
- * header we hand it in `.dogfood.toml`. Each row maps a long-lived opaque token
- * to a user, so a request carrying it resolves to that user's role in the
- * backend. Seeded for the four fixture roles; also mintable by any signed-in user
- * for programmatic access (T4 API-first).
+ * Personal API tokens. `Authorization: Bearer <token>` resolves to the owning
+ * user and their role. The acceptance checker uses seeded tokens; any user can
+ * mint their own from Settings → API tokens. Only a SHA-256 hash is stored.
  */
 export const apiToken = pgTable("api_token", {
   id: text("id").primaryKey(),
-  token: text("token").notNull().unique(),
+  tokenHash: text("token_hash").notNull().unique(),
+  // First characters of the token, shown in the UI so a user can tell tokens apart.
+  prefix: text("prefix").notNull(),
   userId: text("user_id")
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
   label: text("label"),
-  createdAt: timestamp("created_at")
-    .$defaultFn(() => new Date())
-    .notNull(),
+  createdAt: createdAt(),
   lastUsedAt: timestamp("last_used_at"),
 });
 
 /* ------------------------------------------------------------------ */
-/* Domain tables                                                      */
+/* Events                                                             */
 /* ------------------------------------------------------------------ */
 
 export const event = pgTable("event", {
   id: text("id").primaryKey(),
-  name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
+  name: text("name").notNull(),
+  tagline: text("tagline"),
+  // Plain-text summary (search, cards, embeds) and the rich overview/rules.
   description: text("description"),
+  content: jsonb("content").$type<RichDoc>(),
+  rules: jsonb("rules").$type<RichDoc>(),
+  mode: text("mode").default("online").notNull(), // online | in-person | hybrid
+  location: text("location"),
+  // Accent hue (0–360) for the event's cover gradient.
+  hue: integer("hue").default(250).notNull(),
+  // draft events are visible to organizers only; published are public.
+  visibility: text("visibility").default("published").notNull(), // draft | published
+  // Lifecycle: submissions → judging → community voting → results.
   submissionsOpen: timestamp("submissions_open"),
   submissionsClose: timestamp("submissions_close").notNull(),
-  // Voting window (T3). Results are hidden until it closes.
+  judgingClose: timestamp("judging_close"),
   votingOpen: timestamp("voting_open"),
   votingClose: timestamp("voting_close"),
-  // Whether results are published to the public (organizer toggle, T3).
   resultsPublished: boolean("results_published").default(false).notNull(),
+  // Team + judging configuration.
+  maxTeamSize: integer("max_team_size").default(4).notNull(),
+  reviewsPerProject: integer("reviews_per_project").default(3).notNull(),
+  // Community voting configuration (T3).
+  votingAccess: text("voting_access").default("authenticated").notNull(), // open | email | authenticated
+  votingEmailDomains: jsonb("voting_email_domains").$type<string[]>().default([]).notNull(),
+  voteBudget: integer("vote_budget").default(16).notNull(),
   createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
-  createdAt: timestamp("created_at")
+  createdAt: createdAt(),
+  updatedAt: timestamp("updated_at")
     .$defaultFn(() => new Date())
     .notNull(),
 });
@@ -144,6 +178,8 @@ export const track = pgTable("track", {
     .notNull()
     .references(() => event.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  description: text("description"),
+  position: integer("position").default(0).notNull(),
 });
 
 export const prize = pgTable("prize", {
@@ -151,18 +187,18 @@ export const prize = pgTable("prize", {
   eventId: text("event_id")
     .notNull()
     .references(() => event.id, { onDelete: "cascade" }),
+  // Awarded by overall judged rank, within one track, or by community vote.
+  kind: text("kind").default("overall").notNull(), // overall | track | community
+  trackId: text("track_id").references(() => track.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   description: text("description"),
   amount: text("amount"),
-  rank: integer("rank"),
+  rank: integer("rank").default(1).notNull(),
 });
 
 /**
- * Organizer-configurable, weighted scoring criteria (T2).
- *
- * The market leader cannot weight criteria at all — this is the differentiator.
- * `weight` is a positive number; JUDGING.md documents that final scores are the
- * weighted mean normalized so weights sum to 1 at compute time.
+ * Organizer-configurable, weighted scoring criteria (T2). Weights are relative;
+ * they are normalized to sum to 1 at compute time (see lib/scoring.ts).
  */
 export const rubricCriterion = pgTable("rubric_criterion", {
   id: text("id").primaryKey(),
@@ -176,18 +212,48 @@ export const rubricCriterion = pgTable("rubric_criterion", {
   position: integer("position").default(0).notNull(),
 });
 
+/** A participant's registration for an event. Creating or joining a team registers you. */
+export const registration = pgTable(
+  "registration",
+  {
+    eventId: text("event_id")
+      .notNull()
+      .references(() => event.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.eventId, t.userId] })]
+);
+
+export const announcement = pgTable("announcement", {
+  id: text("id").primaryKey(),
+  eventId: text("event_id")
+    .notNull()
+    .references(() => event.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  pinned: boolean("pinned").default(false).notNull(),
+  authorId: text("author_id").references(() => user.id, { onDelete: "set null" }),
+  createdAt: createdAt(),
+});
+
+/* ------------------------------------------------------------------ */
+/* Teams and projects                                                 */
+/* ------------------------------------------------------------------ */
+
 export const team = pgTable("team", {
   id: text("id").primaryKey(),
   eventId: text("event_id")
     .notNull()
     .references(() => event.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
-  // Invite-link token: whoever holds the link can join the team. Simple by
-  // design (per project decision: no heavyweight invitation/acceptance flow).
+  description: text("description"),
+  lookingForMembers: boolean("looking_for_members").default(false).notNull(),
+  // Whoever holds the invite link can join (up to the event's max team size).
   inviteToken: text("invite_token").notNull().unique(),
-  createdAt: timestamp("created_at")
-    .$defaultFn(() => new Date())
-    .notNull(),
+  createdAt: createdAt(),
 });
 
 export const teamMember = pgTable(
@@ -207,68 +273,73 @@ export const teamMember = pgTable(
   (t) => [primaryKey({ columns: [t.teamId, t.userId] })]
 );
 
-export const project = pgTable("project", {
-  id: text("id").primaryKey(),
-  eventId: text("event_id")
-    .notNull()
-    .references(() => event.id, { onDelete: "cascade" }),
-  teamId: text("team_id").references(() => team.id, { onDelete: "set null" }),
-  trackId: text("track_id").references(() => track.id, { onDelete: "set null" }),
-  title: text("title").notNull(),
-  tagline: text("tagline"),
-  summary: text("summary"),
-  description: text("description"),
-  thumbnailUrl: text("thumbnail_url"),
-  galleryUrls: jsonb("gallery_urls").$type<string[]>().default([]),
-  videoUrl: text("video_url"),
-  repoUrl: text("repo_url"),
-  liveUrl: text("live_url"),
-  techTags: jsonb("tech_tags").$type<string[]>().default([]),
-  // Organizer-defined custom question answers, keyed by question id.
-  customAnswers: jsonb("custom_answers").$type<Record<string, string>>().default({}),
-  // draft until submitted; editable until the deadline.
-  status: text("status").default("draft").notNull(), // draft | submitted
-  submittedAt: timestamp("submitted_at"),
-  createdAt: timestamp("created_at")
-    .$defaultFn(() => new Date())
-    .notNull(),
-  updatedAt: timestamp("updated_at")
-    .$defaultFn(() => new Date())
-    .notNull(),
-});
+export const project = pgTable(
+  "project",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => event.id, { onDelete: "cascade" }),
+    teamId: text("team_id").references(() => team.id, { onDelete: "set null" }),
+    trackId: text("track_id").references(() => track.id, { onDelete: "set null" }),
+    title: text("title").notNull(),
+    tagline: text("tagline"),
+    // Plain-text rendering of `content`, kept for search, cards and similarity.
+    description: text("description"),
+    content: jsonb("content").$type<RichDoc>(),
+    thumbnailUrl: text("thumbnail_url"),
+    videoUrl: text("video_url"),
+    repoUrl: text("repo_url"),
+    liveUrl: text("live_url"),
+    techTags: jsonb("tech_tags").$type<string[]>().default([]).notNull(),
+    // draft until submitted; editable until the deadline.
+    status: text("status").default("draft").notNull(), // draft | submitted
+    submittedAt: timestamp("submitted_at"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at")
+      .$defaultFn(() => new Date())
+      .notNull(),
+  },
+  (t) => [index("project_event_status_idx").on(t.eventId, t.status)]
+);
 
-/**
- * Which tracks a judge is eligible to review (T2).
- *
- * "A track judge must never see another track." Eligibility is captured here and
- * honored by the assignment algorithm (`lib/assignment.ts`) and again enforced
- * in the backend at read time. A judge with no rows here is a generalist,
- * eligible for every track. Mirrors the fixture judges' `tracks` array.
- */
-export const judgeTracks = pgTable(
-  "judge_tracks",
+/* ------------------------------------------------------------------ */
+/* Judging                                                            */
+/* ------------------------------------------------------------------ */
+
+/** The judging panel of an event. Only panel members can be assigned projects. */
+export const eventJudge = pgTable(
+  "event_judge",
   {
     eventId: text("event_id")
       .notNull()
       .references(() => event.id, { onDelete: "cascade" }),
-    judgeId: text("judge_id")
+    userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    trackId: text("track_id")
-      .notNull()
-      .references(() => track.id, { onDelete: "cascade" }),
+    // Tracks this judge may review; empty = every track.
+    trackIds: jsonb("track_ids").$type<string[]>().default([]).notNull(),
+    createdAt: createdAt(),
   },
-  (t) => [primaryKey({ columns: [t.judgeId, t.trackId] })]
+  (t) => [primaryKey({ columns: [t.eventId, t.userId] })]
 );
 
-/**
- * Judge ↔ project assignment (T2).
- *
- * A judge only ever sees the projects assigned to them. Rows are created by the
- * organizer, either by batch or by the round-robin algorithm in
- * `lib/assignment.ts`. Uniqueness stops a judge being assigned the same project
- * twice.
- */
+/** An emailed (here: copy-a-link) invitation to join an event's judging panel. */
+export const judgeInvite = pgTable("judge_invite", {
+  id: text("id").primaryKey(),
+  eventId: text("event_id")
+    .notNull()
+    .references(() => event.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  token: text("token").notNull().unique(),
+  trackIds: jsonb("track_ids").$type<string[]>().default([]).notNull(),
+  invitedBy: text("invited_by").references(() => user.id, { onDelete: "set null" }),
+  acceptedBy: text("accepted_by").references(() => user.id, { onDelete: "set null" }),
+  acceptedAt: timestamp("accepted_at"),
+  createdAt: createdAt(),
+});
+
+/** Judge ↔ project assignment. A judge only ever sees projects assigned to them. */
 export const assignment = pgTable(
   "assignment",
   {
@@ -283,20 +354,15 @@ export const assignment = pgTable(
       .notNull()
       .references(() => project.id, { onDelete: "cascade" }),
     batch: integer("batch").default(1).notNull(),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
+    createdAt: createdAt(),
   },
-  (t) => [unique().on(t.judgeId, t.projectId)]
+  (t) => [unique().on(t.judgeId, t.projectId), index("assignment_event_idx").on(t.eventId)]
 );
 
 /**
- * A judge's score for one project (T2).
- *
- * `criteria` holds the per-criterion 1–5 marks keyed by criterion key, matching
- * the fixture's `scores[].criteria` shape. The weighted aggregate and the
- * normalized value are computed on read (see `lib/scoring.ts`) rather than
- * stored, so re-weighting the rubric never leaves stale numbers behind.
+ * A judge's score for one project: per-criterion 1–5 marks keyed by criterion
+ * key. The weighted aggregate and normalized value are computed on read so
+ * re-weighting the rubric never leaves stale numbers behind.
  */
 export const score = pgTable(
   "score",
@@ -313,22 +379,15 @@ export const score = pgTable(
       .references(() => project.id, { onDelete: "cascade" }),
     criteria: jsonb("criteria").$type<Record<string, number>>().notNull(),
     comment: text("comment"),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
+    createdAt: createdAt(),
     updatedAt: timestamp("updated_at")
       .$defaultFn(() => new Date())
       .notNull(),
   },
-  (t) => [unique().on(t.judgeId, t.projectId)]
+  (t) => [unique().on(t.judgeId, t.projectId), index("score_event_idx").on(t.eventId)]
 );
 
-/**
- * Pairwise comparison (T2 bonus — Gavel-style).
- *
- * A judge is shown two projects and picks the winner; a Bradley–Terry estimator
- * recovers a global ranking. Stored append-only so the estimator can be re-run.
- */
+/** Pairwise comparison: a judge picked `winnerId` over `loserId` (Bradley–Terry). */
 export const pairwiseVote = pgTable("pairwise_vote", {
   id: text("id").primaryKey(),
   eventId: text("event_id")
@@ -343,18 +402,18 @@ export const pairwiseVote = pgTable("pairwise_vote", {
   loserId: text("loser_id")
     .notNull()
     .references(() => project.id, { onDelete: "cascade" }),
-  createdAt: timestamp("created_at")
-    .$defaultFn(() => new Date())
-    .notNull(),
+  createdAt: createdAt(),
 });
 
+/* ------------------------------------------------------------------ */
+/* Community                                                          */
+/* ------------------------------------------------------------------ */
+
 /**
- * Community vote (T3).
- *
- * `weight` supports quadratic voting: casting n votes on one project costs the
- * caller influence, so the stored influence is sqrt-scaled at tally time. A
- * voter is identified by `voterKey` (authenticated user id, or a hashed
- * email/ip for gated/open modes) to make duplicate detection possible.
+ * A voter's quadratic allocation to one project (T3). `votes` is the number of
+ * votes; its cost is votes², and the sum of costs per voter is capped by the
+ * event's `voteBudget`. `voterKey` is `user:<id>`, `email:<address>` or
+ * `anon:<cookie>` depending on the event's access mode.
  */
 export const vote = pgTable(
   "vote",
@@ -367,12 +426,33 @@ export const vote = pgTable(
       .notNull()
       .references(() => project.id, { onDelete: "cascade" }),
     voterKey: text("voter_key").notNull(),
-    credits: integer("credits").default(1).notNull(),
-    createdAt: timestamp("created_at")
+    votes: integer("votes").default(1).notNull(),
+    ipAddress: text("ip_address"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at")
       .$defaultFn(() => new Date())
       .notNull(),
   },
-  (t) => [unique().on(t.projectId, t.voterKey)]
+  (t) => [unique().on(t.projectId, t.voterKey), index("vote_event_idx").on(t.eventId)]
+);
+
+/** Email-gated voting: a one-time code proves control of an address. */
+export const voter = pgTable(
+  "voter",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => event.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    codeHash: text("code_hash").notNull(),
+    // Session secret handed back after verification, stored hashed.
+    sessionHash: text("session_hash"),
+    attempts: integer("attempts").default(0).notNull(),
+    verifiedAt: timestamp("verified_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [unique().on(t.eventId, t.email)]
 );
 
 export const comment = pgTable("comment", {
@@ -386,51 +466,45 @@ export const comment = pgTable("comment", {
   authorId: text("author_id").references(() => user.id, { onDelete: "set null" }),
   authorName: text("author_name"),
   body: text("body").notNull(),
-  createdAt: timestamp("created_at")
-    .$defaultFn(() => new Date())
-    .notNull(),
+  createdAt: createdAt(),
 });
 
-/**
- * Append-only audit trail (T2/T3 — "an audit trail an organizer can read").
- *
- * Every score, assignment, export, vote and role change writes a row here.
- * Human-readable on purpose so an organizer can read it without a DB client.
- */
-export const auditLog = pgTable("audit_log", {
-  id: text("id").primaryKey(),
-  eventId: text("event_id"),
-  actorId: text("actor_id"),
-  actorRole: text("actor_role"),
-  action: text("action").notNull(),
-  target: text("target"),
-  detail: jsonb("detail").$type<Record<string, unknown>>(),
-  ipAddress: text("ip_address"),
-  createdAt: timestamp("created_at")
-    .$defaultFn(() => new Date())
-    .notNull(),
-});
+/* ------------------------------------------------------------------ */
+/* Operations                                                         */
+/* ------------------------------------------------------------------ */
 
 /**
- * Webhook subscriptions (T4).
- *
- * An organizer registers a URL to receive JSON POSTs when events happen
- * (project submitted, score saved, results published, …). Each delivery is
- * signed with the subscription's `secret` via an HMAC header so the receiver can
- * verify authenticity. Delivery attempts are logged in `webhookDelivery`.
+ * Append-only audit trail. Every consequential action writes one row with a
+ * human-readable action name; organizers read it in the dashboard.
  */
+export const auditLog = pgTable(
+  "audit_log",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id"),
+    actorId: text("actor_id"),
+    actorName: text("actor_name"),
+    actorRole: text("actor_role"),
+    action: text("action").notNull(),
+    target: text("target"),
+    detail: jsonb("detail").$type<Record<string, unknown>>(),
+    ipAddress: text("ip_address"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("audit_event_idx").on(t.eventId, t.createdAt)]
+);
+
+/** Webhook subscriptions. Deliveries are HMAC-signed with the subscription's secret. */
 export const webhook = pgTable("webhook", {
   id: text("id").primaryKey(),
   eventId: text("event_id").references(() => event.id, { onDelete: "cascade" }),
   url: text("url").notNull(),
   secret: text("secret").notNull(),
   // Which event types to deliver; empty = all.
-  events: jsonb("events").$type<string[]>().default([]),
+  events: jsonb("events").$type<string[]>().default([]).notNull(),
   active: boolean("active").default(true).notNull(),
   createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
-  createdAt: timestamp("created_at")
-    .$defaultFn(() => new Date())
-    .notNull(),
+  createdAt: createdAt(),
 });
 
 export const webhookDelivery = pgTable("webhook_delivery", {
@@ -443,17 +517,13 @@ export const webhookDelivery = pgTable("webhook_delivery", {
   status: integer("status"),
   ok: boolean("ok").default(false).notNull(),
   error: text("error"),
-  createdAt: timestamp("created_at")
-    .$defaultFn(() => new Date())
-    .notNull(),
+  createdAt: createdAt(),
 });
 
 /**
- * Judge participation certificates (T4).
- *
- * A signed, publicly verifiable record that a judge reviewed for an event. The
- * `signature` is an HMAC over the canonical fields; anyone can re-verify it at
- * `/api/certificates/<id>` without an account. `serial` is the human-facing id.
+ * Signed, publicly verifiable certificates (T4): judge participation and prize
+ * winners. `signature` is an HMAC over the canonical fields; anyone can
+ * re-verify at /certificates/<serial>.
  */
 export const certificate = pgTable("certificate", {
   id: text("id").primaryKey(),
@@ -461,11 +531,9 @@ export const certificate = pgTable("certificate", {
   eventId: text("event_id")
     .notNull()
     .references(() => event.id, { onDelete: "cascade" }),
-  subjectId: text("subject_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
+  subjectId: text("subject_id").references(() => user.id, { onDelete: "set null" }),
   subjectName: text("subject_name").notNull(),
-  kind: text("kind").notNull(), // judge-participation | winner | …
+  kind: text("kind").notNull(), // judge | winner | participant
   statement: text("statement").notNull(),
   reviewsCompleted: integer("reviews_completed").default(0).notNull(),
   signature: text("signature").notNull(),
@@ -489,6 +557,14 @@ export const eventRelations = relations(event, ({ many }) => ({
 export const trackRelations = relations(track, ({ one, many }) => ({
   event: one(event, { fields: [track.eventId], references: [event.id] }),
   projects: many(project),
+}));
+
+export const prizeRelations = relations(prize, ({ one }) => ({
+  event: one(event, { fields: [prize.eventId], references: [event.id] }),
+}));
+
+export const rubricRelations = relations(rubricCriterion, ({ one }) => ({
+  event: one(event, { fields: [rubricCriterion.eventId], references: [event.id] }),
 }));
 
 export const teamRelations = relations(team, ({ one, many }) => ({
@@ -524,20 +600,29 @@ export const scoreRelations = relations(score, ({ one }) => ({
   project: one(project, { fields: [score.projectId], references: [project.id] }),
 }));
 
+export const commentRelations = relations(comment, ({ one }) => ({
+  project: one(project, { fields: [comment.projectId], references: [project.id] }),
+  author: one(user, { fields: [comment.authorId], references: [user.id] }),
+}));
+
 export type User = typeof user.$inferSelect;
 export type Event = typeof event.$inferSelect;
 export type Track = typeof track.$inferSelect;
 export type Prize = typeof prize.$inferSelect;
 export type RubricCriterion = typeof rubricCriterion.$inferSelect;
 export type Team = typeof team.$inferSelect;
+export type TeamMember = typeof teamMember.$inferSelect;
 export type Project = typeof project.$inferSelect;
 export type Assignment = typeof assignment.$inferSelect;
 export type Score = typeof score.$inferSelect;
 export type Vote = typeof vote.$inferSelect;
 export type Comment = typeof comment.$inferSelect;
+export type Announcement = typeof announcement.$inferSelect;
 export type ApiToken = typeof apiToken.$inferSelect;
 export type AuditLog = typeof auditLog.$inferSelect;
 export type Webhook = typeof webhook.$inferSelect;
 export type WebhookDelivery = typeof webhookDelivery.$inferSelect;
 export type Certificate = typeof certificate.$inferSelect;
 export type PairwiseVote = typeof pairwiseVote.$inferSelect;
+export type EventJudge = typeof eventJudge.$inferSelect;
+export type JudgeInvite = typeof judgeInvite.$inferSelect;

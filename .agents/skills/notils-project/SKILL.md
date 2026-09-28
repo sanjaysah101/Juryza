@@ -44,12 +44,6 @@ The **component source, theme, `cn()`, and conventions are identical in both** �
 │   │   ├── lib/utils.ts    #   cn()
 │   │   ├── hooks/
 │   │   └── styles/globals.css  # canonical theme
-│   ├── api-client/         # HTTP transport core (createHttpClient, HttpError)
-│   ├── auth-core/          # the auth contract (types only)
-│   ├── auth-custom/        # auth provider: your own backend
-│   ├── auth-better-auth/   # auth provider: Better Auth
-│   ├── auth-ui/            # SignInForm, SignUpForm, ProtectedRoute, ...
-│   └── form-builder/       # Zod schema → form renderer
 ├── turbo.json              # Turborepo pipeline
 └── package.json            # workspaces + root scripts
 ```
@@ -162,92 +156,24 @@ Installed skills are recorded in `skills-lock.json`, so they're reproducible
 across machines. **`notils-project` is not in that lockfile** — it ships with the
 scaffold and is yours to edit, like every other file here.
 
-## Forms — the schema-to-form renderer
+## Forms and auth in this project
 
-A Zod schema is the single source of truth for a form's fields, validation, and layout. `<SchemaForm/>` walks the schema and renders it — you don't hand-write field markup.
+The scaffold's optional packages (`api-client`, `auth-core`, `auth-custom`,
+`auth-better-auth`, `auth-ui`, `form-builder`) were **removed**: Juryza has one
+auth provider and hand-built forms, so the provider contract and the
+schema-to-form renderer were indirection without reuse.
 
-**Import** — monorepo: `@<scope>/form-builder/schema-form`; standalone: `@/lib/form-builder/schema-form`.
-
-```tsx
-const contactSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  email: z.string().email(),
-  message: z.string().min(10, "Tell us a bit more"),
-});
-
-<SchemaForm
-  schema={contactSchema}
-  onSubmit={async (values) => { /* values is fully typed from the schema */ }}
-  submitLabel="Send"
-  layout={[["firstName", "lastName"], ["email"]]}
-/>
-```
-
-- **It recurses.** Nested objects, arrays (via `useFieldArray`), discriminated unions (rendered as a variant picker), and enums all work without extra code. Add a field to the schema and it appears.
-- **`layout`** groups **top-level** fields into rows — `[["firstName","lastName"]]` puts those two side by side. Unmentioned fields get their own full-width row, in schema order, after the laid-out ones. Nested fields keep their own vertical layout regardless.
-- **`uiHints`** — per-field overrides keyed by field path: `showWhen` for conditional visibility, `className` for style tweaks, or a full custom render. Use this before reaching for a hand-built form.
-- **Cross-field validation needs no `uiHints`.** A Zod `.superRefine()` that calls `ctx.addIssue({ path })` already surfaces on the right field.
-- **Validation messages come from the schema.** Put them in the Zod definition (`.min(10, "Tell us a bit more")`), not in the component.
-- **Extending it:** `walkSchema` (schema → descriptor tree) has zero React/UI dependency; `field-renderer.tsx` is the swappable half that picks actual components. To change how a field type renders, edit the renderer — not `SchemaForm`.
-
-## Auth
-
-Auth is a **contract with swappable providers**, not one hardcoded integration. The scaffolded provider is the **custom-backend** one: for a project that already has its own auth API.
-
-The pieces — monorepo `@<scope>/…`, standalone `@/lib/…`:
-
-- **`auth-core`** — the contract (`AuthContract`, `AuthSession`, `AuthResult`). Types only, no runtime code. Everything else points here.
-- **`api-client`** — the HTTP transport (`createHttpClient`, `HttpError`). Platform-neutral; no browser-only or Node-only APIs. Usable on its own for any API, not just auth.
-- **`auth-custom`** — provider for **your own backend**. `createCustomBackendAuthProvider` (token storage + single-flight refresh) and `createAuthContract`.
-- **`auth-better-auth`** — provider backed by **[Better Auth](https://better-auth.com)**, when you'd rather not run an auth server. Also exports `getServerSession`/`hasServerSession` for server components and route handlers.
-- **`auth-ui`** — `SignInForm`, `SignUpForm`, `ForgotPasswordForm`, `SessionStatus`, `ProtectedRoute`. Built on `SchemaForm`; driven **only by the contract**, so the same components render against either provider.
-
-### Choosing a provider
-
-Use **exactly one**. They are alternatives, not layers:
-
-| You have… | Use |
-| --- | --- |
-| An existing auth API (Rust, Express, Go, anything) | `auth-custom` — give it the URLs and Zod schemas |
-| No auth server, and you want one fast | `auth-better-auth` — runs in-process with Next.js |
-
-**Your auth provider and where your business logic lives are independent choices.** Remote auth with local Drizzle logic is as valid as Better Auth alongside a separate service. Nothing in these packages assumes either.
-
-Provider-specific flows — 2FA, passkeys, magic links, SSO, organizations — are deliberately **not** in the contract, since a hand-rolled backend usually can't implement them. Reach for the provider's own API (or [better-auth-ui](https://better-auth-ui.com) for Better Auth) when you need those.
-
-**Wiring it to your backend** — the scaffold ships a working example at `src/lib/auth.ts` (monorepo: `apps/app/src/lib/auth.ts`) pointed at mock in-memory API routes. **There are no assumed defaults**: every endpoint path and every request/response shape is a Zod schema you supply. To use your real backend, change the paths and schemas in that one file; nothing else is project-specific.
-
-```ts
-// One config object drives everything — every path and schema is explicit.
-const authConfig: CustomBackendAuthConfig<User, SignIn, SignUp> = {
-  loginPath: "/api/auth/login",        // ← your endpoints
-  registerPath: "/api/auth/register",
-  refreshPath: "/api/auth/refresh",
-  sessionPath: "/api/auth/session",
-  loginResponseSchema: tokenEnvelope,  // ← your actual response shapes
-  sessionResponseSchema: userSchema,
-  signInInputSchema,                   // ← your input shapes
-  signUpInputSchema,
-  storage,                             // ← where tokens live
-};
-
-const anonymousHttp = createHttpClient({ baseUrl, apiPrefix: "" });
-const authProvider = createCustomBackendAuthProvider(authConfig, anonymousHttp);
-const authedHttp = createHttpClient({ baseUrl, apiPrefix: "", auth: authProvider });
-
-export const auth = createAuthContract(authConfig, anonymousHttp, authedHttp);
-```
-
-Note the **two** clients: `anonymousHttp` for login/register/refresh (no token yet) and `authedHttp` for authenticated calls (attaches the token, refreshes on 401). The provider bridges them.
-
-The two failure classes are handled **differently on purpose** — don't "fix" this by unifying them:
-- A **`ZodError`** (response doesn't match your schema) **throws**. That's a bug in the schema or the backend, to fix, not a runtime state to swallow.
-- An **`HttpError`** (network failure, wrong password) is **caught** and returned as an `AuthResult`.
-
-**`ProtectedRoute` deliberately does not redirect.** It gates children on session status and calls an `onUnauthenticated` callback — routing is `next/navigation`'s job, kept out of the component so the package stays framework-agnostic. Wire the redirect yourself.
-
-**Not included:** 2FA, passkeys, SSO, magic links, and orgs. Those are provider-specific and a custom backend usually doesn't implement them the same way, if at all.
+- **Auth** is Better Auth, configured in `apps/juryza/src/lib/server/auth.ts`
+  (server) and `apps/juryza/src/lib/auth-client.ts` (browser). API routes resolve
+  the caller with `requireUser` / `requireRole` / `resolveIdentity` from
+  `lib/server/identity.ts` (bearer API token or session cookie) and check
+  per-event permissions with `lib/server/events.ts`. Authorization lives in the
+  route handlers, never in the UI.
+- **Forms** use the kit's `Field*` primitives with controlled inputs; the server
+  validates every body with Zod (`readBody(req, schema)` from
+  `lib/server/http.ts`), and errors come back as `{ error, issues? }`.
+- **Route handlers** are written as `export const GET = handle<Params>(async (req, params) => …)`
+  and throw `HttpError`s (`badRequest`, `forbidden`, `notFound`, …).
 
 ## Theming
 

@@ -1,88 +1,133 @@
-# THREAT-MODEL.md — voting & submission abuse
+# THREAT-MODEL.md — what we defend, what we don't
 
-A written, deliberately honest threat model for Juryza (Threat Model bonus). It
-names the attacks we stopped, and the ones we did not. The honest list is worth
-more than the heroic one.
+An honest threat model: the attacks Juryza stops, how, and the ones it does
+not. The honest list is worth more than the heroic one.
 
-## Assets & trust boundaries
+## Assets and the trust boundary
 
-- **Backend API** (`apps/juryza/src/app/api/**`) is the only trust boundary that
-  matters. The UI is untrusted: every authorization decision is made server-side
-  in `lib/api-auth.ts`, and the acceptance suite verifies this with a `curl`, not
-  a click.
-- **Credentials.** Bearer `api_token` rows (long, random, `nanoid(32)`) and
-  Better Auth session cookies. The signing/HMAC key is `BETTER_AUTH_SECRET`
-  (or `SIGNING_SECRET`).
-- **Data at risk.** Judges' scores (must stay isolated), the vote tally (must not
-  be gameable), and results before publication (must stay hidden).
+- **The API is the only trust boundary.** Every route under
+  `apps/juryza/src/app/api/**` resolves the caller (`lib/server/identity.ts`)
+  and checks permission itself (`lib/server/events.ts` for per-event rules).
+  The UI is untrusted; it hides nothing that the API would otherwise hand out.
+  The app's own pages use the same REST API as any client.
+- **Credentials.** Better Auth session cookies (HTTP-only, SameSite=Lax) and
+  personal API tokens (`jz_` + 40 random characters, **stored only as SHA-256
+  hashes**, shown once, revocable, with last-used time).
+- **Secrets.** `BETTER_AUTH_SECRET` signs sessions; `SIGNING_SECRET` (falls
+  back to it) signs certificates. Each webhook has its own secret.
+- **Data at risk.** Judges' scores (isolation), vote tallies (integrity),
+  results before publication (secrecy), submissions after the deadline
+  (fairness), and people's email addresses (privacy).
 
 ## Attacks addressed
 
-### Judge collusion / score leakage
-- **Backend role isolation.** `/api/judge/scores` returns only the caller's
-  scores; requesting `?judge=<other>` is refused 403. A participant hitting it is
-  403. Verified by acceptance checks T2.03–T2.05 and by direct curl.
-- **Assignment scoping.** A judge can only score/compare projects assigned to
-  them; the check reads the `assignment` table, not a hidden UI state.
-- **Track isolation.** A track judge is never assigned another track's projects.
+### Judge collusion and score leakage
+- **Cross-judge reads are refused in the backend.** `GET /api/judge/scores`
+  returns only the caller's scores; `?judge=<anyone else>` is a 403 decided
+  before any query runs, and the attempt is audited (`judge.scores.denied`).
+  Callers on no judging panel (participants) get 403. Verified by the
+  acceptance suite with curl and by the integration tests.
+- **Assignment scoping.** Scores and pairwise verdicts are only accepted for
+  projects assigned to the caller.
+- **Conflicts of interest.** The planner never assigns a judge a project from a
+  team they are on.
+- **Per-judge calibration is organizer-only**; the public leaderboard shows
+  normalized aggregates, never individual judges' marks.
+- **Late score edits.** Scoring closes at `judgingClose` and when results are
+  published; every save is audited with the marks given.
 
-### Ballot stuffing (community voting)
-- **Duplicate detection.** A unique `(project, voter_key)` constraint means a
-  second vote updates rather than stacks. `voter_key` is the user id when
-  authenticated, else a per-IP key.
-- **Rate limiting.** Fixed-window per-IP limit (30 votes/min) blunts scripted
-  stuffing (`lib/rate-limit.ts`).
-- **Quadratic cost.** Even with many identities, concentrating influence on one
-  project is sub-linear (`sqrt(credits)`), so a Sybil fleet buys less than it
-  costs.
-- **Randomized ballots** remove the position-bias an attacker could exploit by
-  submitting first.
+### Ballot stuffing and Sybil voting
+- **Access modes per event** — signed-in accounts, email-verified voters
+  (one-time 6-digit code, 15-minute expiry, 5 attempts, optional domain
+  allowlist), or open link. Organizers pick the strength they need.
+- **Quadratic budget, enforced server-side.** Each voter has a fixed credit
+  budget; `v` votes cost `v²`. Checked inside a transaction under a per-voter
+  advisory lock, so parallel requests cannot overspend. A Sybil fleet buys
+  linearly more identities for sub-linear influence per project.
+- **Duplicate detection.** Unique `(project, voter_key)` — re-voting updates,
+  never stacks. Open-link voting caps anonymous voters at 3 per network per
+  event (`vote.blocked.ip_cap` is audited).
+- **Rate limits** per IP and per voter on votes; per IP and per address on
+  verification codes; per user on comments; Better Auth limits sign-in (10/min)
+  and sign-up (5/min).
+- **No self-votes** — voting for your own team's project is refused.
+- **Randomized ballots** (per-voter seed) remove position bias an early
+  submitter could exploit.
+- **Integrity dashboard** — organizers see voters by kind, voters sharing a
+  network, and burst minutes, and can export every vote with its IP.
 
 ### Deadline gaming
-- **Submission close is enforced in the backend.** `POST /api/projects` and
-  `PATCH` are refused once `submissions_close` has passed (organizers excepted,
-  for data fixes). The acceptance suite's closed-event check exercises exactly
-  this. No client clock is trusted.
+- **Submission close is enforced in the backend** for creating, editing,
+  submitting and withdrawing projects, and for team formation and roster
+  changes (teams lock at the deadline so rosters cannot be reshuffled after
+  judging starts). Only the event's organizers can edit afterwards (for data
+  fixes), and that is audited. No client clock is trusted.
 
-### Result leakage before publication
-- `/api/results` and `/api/results/pairwise` return nothing to non-organizers
-  until `resultsPublished` is set — so the standings can't be watched mid-window
-  or scraped early.
+### Result leakage
+- `GET /api/events/:event/results` returns no numbers to anyone but the event's
+  organizers until publication. Publishing is **refused while voting is open**
+  (or explicitly closes voting), so a live vote can never see standings.
+- Ballots never contain tallies; the live tally endpoint is organizer-only.
 
-### Tampering with issued records
-- **Certificates are HMAC-signed** over canonical fields; the public verify
-  endpoint recomputes the HMAC, so editing `reviewsCompleted` or the name makes
-  `valid: false`. Webhook deliveries are signed the same way so a receiver can
-  reject spoofed calls.
+### Privilege escalation and cross-event access
+- Event management requires being that event's creator or a platform admin;
+  the `organizer` role alone only grants creating events. Draft events 404 for
+  everyone else (no existence leak).
+- Only admins change roles or suspend accounts; admins cannot demote
+  themselves, so an instance always keeps one. Suspension revokes sessions and
+  tokens stop resolving immediately.
+- Judge invitations are bound to the invited email: a forwarded link does not
+  work for another account.
+
+### Content injection
+- **Rich text is stored as ProseMirror JSON and rendered through a fixed
+  schema** — no user HTML reaches the page. Links are limited to
+  `http(s)`/`mailto`, images to `http(s)`.
+- **CSV formula injection** — cells starting with `= + - @` are prefixed, since
+  organizers open exports in spreadsheets and titles are attacker-controlled.
+- **Clickjacking** — every page sends `X-Frame-Options: DENY` except the
+  embeddable gallery, which is read-only by design.
+- Video embeds are built from a parsed id, never from the raw URL.
+
+### Tampering with records
+- **Certificates** are HMAC-SHA256 over the canonical record (serial, event,
+  subject, kind, statement, review count, issue time); the public verifier
+  recomputes it, so any edited field reads as invalid.
+- **Webhooks** are signed per subscription (`X-Juryza-Signature: sha256=…`),
+  and the secret is shown once.
 
 ### Auditability
-- Every consequential action writes a human-readable `audit_log` row an organizer
-  can read at `/api/organizer/audit` — collusion or abuse leaves a trail.
+- Every consequential action — score saved, assignments generated, export
+  downloaded, role changed, vote cast, denied cross-judge read, rejected late
+  submission — writes an `audit_log` row with actor, role, target, detail and
+  IP. Organizers filter and export it from the event console.
 
 ## Attacks NOT fully addressed (honest list)
 
-- **Sybil registration.** Sign-up is open and there is no email verification in
-  the offline demo (no mail server). A determined attacker can mint accounts to
-  vote. Mitigations in place (quadratic cost, rate limits, dedupe) raise the cost
-  but do not eliminate it. Production fix: email verification + per-account vote
-  budgets; both are Better-Auth-native and noted as future work.
-- **Distributed IP rotation.** The rate limiter is per-IP and in-process; a
-  botnet across many IPs, or a multi-instance deployment, defeats it. Production
-  fix: move the counter to shared storage (Better Auth already supports a Redis
-  `secondaryStorage`) and add per-account limits.
-- **Organizer trust.** An organizer can publish, assign, and export freely — the
-  model trusts the organizer role. Cross-organizer isolation (multi-tenant) is
-  not implemented; this is a single-tenant portal per deployment.
-- **Submission scraping.** The gallery is public by design (it must be), so
-  submitted project metadata is readable. We rate-limit writes, not public reads.
-- **Timing side channels** in auth comparisons: token lookup is a DB equality
-  check, not constant-time; certificate/webhook signature checks use
-  `timingSafeEqual`, auth-token lookup does not. Low risk given token entropy.
+- **Determined Sybils in open or account mode.** Sign-up is open and the
+  offline build has no mail server, so an attacker can create many accounts.
+  Budgets, dedupe and rate limits raise the cost; they do not prevent it. Use
+  email-verified voting with a domain allowlist when it matters.
+- **Distributed IP rotation / multi-instance.** Rate limits and the anon-per-IP
+  cap are keyed by IP and kept in process memory. A botnet, or running several
+  app instances, defeats them. Fix: shared counter storage (Redis) and
+  per-account limits.
+- **Organizer trust.** An event's organizers can publish, assign, edit
+  submissions after the deadline and export freely — the model trusts them (all
+  of it is audited, none of it is prevented).
+- **Webhook SSRF.** Organizers can point webhooks at any URL, including internal
+  addresses reachable from the server. Acceptable for a single-tenant
+  self-hosted install; a shared deployment should add an egress allowlist.
+- **Email codes are logged, not mailed**, in the offline build (as are password
+  reset links). Anyone with server-log access can read them.
+- **Submission scraping.** The gallery is public by design.
+- **Judge-to-judge collusion outside the platform** (agreeing marks by chat)
+  cannot be prevented; calibration flags and the audit trail make it visible
+  after the fact, not impossible.
 
-## Residual risk summary
+## Residual risk
 
-The judging layer (isolation, deadline, results-hiding, audit) is hardened in the
-backend and verified. The community-voting layer is *raised-cost*, not
-*attack-proof*, against a motivated Sybil adversary — which matches the reality
-that one-person-one-vote is conceded-gameable industry-wide, and quadratic voting
-is the most credible shipped mitigation rather than a cure.
+The judging layer — isolation, assignment scoping, deadline, results secrecy,
+audit — is enforced in the backend and covered by tests. Community voting is
+*raised-cost, not attack-proof*: that is the honest state of the art for public
+votes, and the organizer chooses how much friction to trade for integrity.

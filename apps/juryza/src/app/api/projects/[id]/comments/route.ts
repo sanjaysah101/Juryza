@@ -1,82 +1,69 @@
-import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
-
 import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { resolveIdentity } from "@/lib/api-auth";
-import { audit } from "@/lib/audit";
-import { comment, db, project } from "@/lib/db";
+import { comment, db, project, user as userTable } from "@/lib/db";
 import { id } from "@/lib/ids";
-import { clientIp, rateLimit } from "@/lib/rate-limit";
+import { audit } from "@/lib/server/audit";
+import { created, handle, notFound, readBody } from "@/lib/server/http";
+import { requireUser } from "@/lib/server/identity";
+import { enforceRateLimit } from "@/lib/server/rate-limit";
+import { dispatch } from "@/lib/server/webhooks";
+
+type P = { id: string };
 
 /**
- * Comments on a gallery project (T3).
- *
- * `GET` is public and lists the thread. `POST` adds a comment; it is rate
- * limited per IP (anti-spam) and requires authentication so every comment has an
- * accountable author. Each write is audited.
+ * GET  /api/projects/:id/comments — the public discussion thread.
+ * POST /api/projects/:id/comments — add a comment. Signed-in users only, so
+ *      every comment has an accountable author; 10 per minute per user.
  */
 
-export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const { id: projectId } = await ctx.params;
-  const rows = await db
-    .select({
-      id: comment.id,
-      authorName: comment.authorName,
-      body: comment.body,
-      createdAt: comment.createdAt,
-    })
-    .from(comment)
-    .where(eq(comment.projectId, projectId))
-    .orderBy(asc(comment.createdAt));
-  return NextResponse.json({ comments: rows });
-}
-
-const postSchema = z.object({ body: z.string().min(1).max(2000) });
-
-export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const { id: projectId } = await ctx.params;
-
-  const identity = await resolveIdentity(req);
-  if (!identity) return NextResponse.json({ error: "Sign in to comment" }, { status: 401 });
-
-  const ip = clientIp(req);
-  const rl = rateLimit(`comment:${identity.userId}`, 10, 60_000);
-  if (!rl.ok) {
-    return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
-  }
-
-  const parsed = postSchema.safeParse(await req.json().catch(() => ({})));
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
-  }
-
-  const rows = await db
-    .select({ eventId: project.eventId })
+async function submittedProject(projectId: string) {
+  const [p] = await db
+    .select({ id: project.id, eventId: project.eventId, status: project.status })
     .from(project)
     .where(eq(project.id, projectId))
     .limit(1);
-  const proj = rows[0];
-  if (!proj) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  if (p?.status !== "submitted") throw notFound("Project not found");
+  return p;
+}
+
+export const GET = handle<P>(async (_req, { id: projectId }) => {
+  await submittedProject(projectId);
+  const comments = await db
+    .select({
+      id: comment.id,
+      body: comment.body,
+      createdAt: comment.createdAt,
+      authorId: comment.authorId,
+      authorName: comment.authorName,
+      authorUsername: userTable.username,
+      authorImage: userTable.image,
+    })
+    .from(comment)
+    .leftJoin(userTable, eq(userTable.id, comment.authorId))
+    .where(eq(comment.projectId, projectId))
+    .orderBy(asc(comment.createdAt));
+  return { comments };
+});
+
+const body = z.object({ body: z.string().trim().min(1, "Write something first").max(2000) });
+
+export const POST = handle<P>(async (req, { id: projectId }) => {
+  const me = await requireUser(req);
+  enforceRateLimit(`comment:${me.userId}`, 10, 60_000);
+  const p = await submittedProject(projectId);
+  const { body: text } = await readBody(req, body);
 
   const commentId = id.comment();
   await db.insert(comment).values({
     id: commentId,
-    eventId: proj.eventId,
+    eventId: p.eventId,
     projectId,
-    authorId: identity.userId,
-    authorName: identity.name || identity.email,
-    body: parsed.data.body,
+    authorId: me.userId,
+    authorName: me.name,
+    body: text,
   });
-
-  await audit({
-    eventId: proj.eventId,
-    actor: identity,
-    action: "comment.posted",
-    target: projectId,
-    ipAddress: ip,
-  });
-
-  return NextResponse.json({ id: commentId }, { status: 201 });
-}
+  await audit({ eventId: p.eventId, actor: me, action: "comment.posted", target: projectId, req });
+  dispatch("comment.posted", { projectId, commentId }, p.eventId);
+  return created({ id: commentId });
+});

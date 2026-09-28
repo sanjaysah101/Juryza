@@ -2,44 +2,33 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
 import { Toaster } from "@juryza/ui/components/ui/sonner";
+import { TooltipProvider } from "@juryza/ui/components/ui/tooltip";
 import { ThemeProvider } from "@juryza/ui/theme/theme";
 
-import { NavBar } from "@/components/nav-bar";
 import { QueryProvider } from "@/lib/query-client";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
+const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "juryza",
-  description: "juryza",
+  title: { default: "Juryza — hackathons, judged fairly", template: "%s · Juryza" },
+  description:
+    "Self-hosted hackathon platform: events, teams, submissions, fair judging with normalization and pairwise ranking, community voting, and results you can defend.",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html
       lang="en"
       suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
-        <ThemeProvider attribute="class" defaultTheme="system">
+      <body className="min-h-full">
+        <ThemeProvider attribute="class" defaultTheme="system" disableTransitionOnChange>
           <QueryProvider>
-            <NavBar />
-            {children}
-            <Toaster />
+            <TooltipProvider delay={200}>{children}</TooltipProvider>
+            <Toaster richColors position="bottom-right" />
           </QueryProvider>
         </ThemeProvider>
       </body>

@@ -1,23 +1,27 @@
 /**
- * Judge → project assignment strategies (T2).
+ * Judge → project assignment (T2). Pure functions returning (judge, project)
+ * pairs, so a plan can be previewed and tested before anything is written.
  *
- * Two modes, both pure functions returning (judgeId, projectId) pairs so they
- * can be tested and previewed before anything is written:
+ * Rules every strategy honours:
+ *  - **Track eligibility** — a judge limited to some tracks never gets a project
+ *    from another track (and the backend re-checks this at scoring time).
+ *  - **Conflicts of interest** — a judge is never assigned a project made by a
+ *    team they belong to.
+ *  - **Idempotence** — existing assignments count towards a project's target
+ *    and a judge's load, so re-running tops up coverage instead of piling on.
  *
- * - **Round-robin** distributes projects across eligible judges so every project
- *   gets `reviewsPerProject` reviews and each judge's load is as even as
- *   possible. Judges are only offered projects in a track they cover (a track
- *   judge never sees another track — enforced here at assignment time and again
- *   in the backend at read time).
- * - **Batch** slices projects into contiguous chunks and hands one chunk per
- *   judge; used when an organizer wants deterministic, human-legible batches.
- *
- * The assignment strategy is documented and defended in JUDGING.md.
+ * Strategies:
+ *  - `balanced` (default): each project gets `reviewsPerProject` reviews, always
+ *    from the eligible judges currently carrying the least work. Projects with
+ *    the fewest eligible judges are placed first so they are not starved.
+ *  - `batch`: contiguous, human-legible chunks ("judge A takes projects 1–10"),
+ *    one review per project.
  */
 
 export interface AssignableJudge {
   id: string;
-  tracks: string[]; // track ids this judge may review; empty = all tracks
+  tracks: string[]; // empty = all tracks
+  conflicts?: Set<string>; // project ids this judge must not review
 }
 
 export interface AssignableProject {
@@ -31,71 +35,74 @@ export interface AssignmentPair {
   batch: number;
 }
 
-function eligible(judge: AssignableJudge, project: AssignableProject): boolean {
-  if (judge.tracks.length === 0) return true; // generalist judge
-  if (!project.trackId) return true; // untracked project is open to any judge
+export function eligible(judge: AssignableJudge, project: AssignableProject): boolean {
+  if (judge.conflicts?.has(project.id)) return false;
+  if (judge.tracks.length === 0 || !project.trackId) return true;
   return judge.tracks.includes(project.trackId);
 }
 
-/**
- * Round-robin with track eligibility and even load.
- *
- * For each project we pick the `reviewsPerProject` eligible judges currently
- * carrying the least load, breaking ties by judge id for determinism. This
- * guarantees every project reaches its review target where enough eligible
- * judges exist, and spreads work evenly rather than dumping it on the first
- * judge in the list.
- */
-export function roundRobin(
+export function balanced(
   judges: AssignableJudge[],
   projects: AssignableProject[],
-  reviewsPerProject: number
+  reviewsPerProject: number,
+  existing: { judgeId: string; projectId: string }[] = []
 ): AssignmentPair[] {
   const load = new Map<string, number>(judges.map((j) => [j.id, 0]));
+  const have = new Map<string, Set<string>>();
+  for (const a of existing) {
+    load.set(a.judgeId, (load.get(a.judgeId) ?? 0) + 1);
+    have.set(a.projectId, (have.get(a.projectId) ?? new Set()).add(a.judgeId));
+  }
+
+  const pool = (p: AssignableProject) =>
+    judges.filter((j) => eligible(j, p) && !have.get(p.id)?.has(j.id));
+  const order = [...projects].sort(
+    (a, b) => pool(a).length - pool(b).length || a.id.localeCompare(b.id)
+  );
+
   const pairs: AssignmentPair[] = [];
-
-  for (const project of projects) {
-    const pool = judges
-      .filter((j) => eligible(j, project))
-      .sort((a, b) => {
-        const la = load.get(a.id) ?? 0;
-        const lb = load.get(b.id) ?? 0;
-        return la - lb || a.id.localeCompare(b.id);
-      });
-
-    const take = Math.min(reviewsPerProject, pool.length);
-    for (let i = 0; i < take; i++) {
-      const judge = pool[i];
-      if (!judge) break;
+  for (const project of order) {
+    const need = reviewsPerProject - (have.get(project.id)?.size ?? 0);
+    if (need <= 0) continue;
+    const candidates = pool(project).sort(
+      (a, b) => (load.get(a.id) ?? 0) - (load.get(b.id) ?? 0) || a.id.localeCompare(b.id)
+    );
+    for (const judge of candidates.slice(0, need)) {
       pairs.push({ judgeId: judge.id, projectId: project.id, batch: 1 });
       load.set(judge.id, (load.get(judge.id) ?? 0) + 1);
     }
   }
-
   return pairs;
 }
 
-/**
- * Contiguous batches: split the eligible project list per judge into equal
- * chunks. Simpler and fully deterministic; useful when an organizer wants to
- * say "judge A takes projects 1–10".
- */
 export function batched(
   judges: AssignableJudge[],
   projects: AssignableProject[]
 ): AssignmentPair[] {
+  if (judges.length === 0) return [];
   const pairs: AssignmentPair[] = [];
-  if (judges.length === 0) return pairs;
-
   const perJudge = Math.ceil(projects.length / judges.length);
   judges.forEach((judge, ji) => {
-    const slice = projects.slice(ji * perJudge, (ji + 1) * perJudge);
-    for (const project of slice) {
-      if (eligible(judge, project)) {
+    for (const project of projects.slice(ji * perJudge, (ji + 1) * perJudge)) {
+      if (eligible(judge, project))
         pairs.push({ judgeId: judge.id, projectId: project.id, batch: ji + 1 });
-      }
     }
   });
-
   return pairs;
+}
+
+/** Coverage summary for a set of pairs — what the organizer sees before committing. */
+export function coverage(
+  projects: AssignableProject[],
+  pairs: { projectId: string }[],
+  target: number
+) {
+  const count = new Map<string, number>();
+  for (const p of pairs) count.set(p.projectId, (count.get(p.projectId) ?? 0) + 1);
+  const under = projects.filter((p) => (count.get(p.id) ?? 0) < target).map((p) => p.id);
+  return {
+    projects: projects.length,
+    fullyCovered: projects.length - under.length,
+    underCovered: under,
+  };
 }

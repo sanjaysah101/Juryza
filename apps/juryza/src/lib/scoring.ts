@@ -71,6 +71,13 @@ export interface NormalizedRow extends ScoreRow {
  */
 const TARGET_SD = 0.9;
 
+/**
+ * Below this spread a judge counts as "flat". Identical marks produce a
+ * floating-point standard deviation of ~1e-16, not exactly 0 — comparing with
+ * `> 0` would divide noise by noise and hand that judge arbitrary z-scores.
+ */
+const FLAT_EPSILON = 1e-9;
+
 export function normalizeScores(rows: ScoreRow[]): NormalizedRow[] {
   const globalMean = mean(rows.map((r) => r.raw));
 
@@ -96,7 +103,7 @@ export function normalizeScores(rows: ScoreRow[]): NormalizedRow[] {
     const { mu, sd } = judgeStats.get(r.judgeId) ?? { mu: r.raw, sd: 0 };
     // A judge with no spread (marked everything the same) carries no comparative
     // signal: z collapses to 0 and their score becomes the global mean.
-    const z = sd > 0 ? (r.raw - mu) / sd : 0;
+    const z = sd > FLAT_EPSILON ? (r.raw - mu) / sd : 0;
     const normalized = clamp(globalMean + z * TARGET_SD, 1, 5);
     return { ...r, z, normalized };
   });
@@ -106,34 +113,41 @@ function clamp(x: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, x));
 }
 
-export interface ProjectResult {
-  projectId: string;
-  reviews: number;
-  rawMean: number;
-  normalizedMean: number;
-}
-
-/** Aggregate per-(judge,project) rows into a per-project result. */
-export function aggregateByProject(normalized: NormalizedRow[]): ProjectResult[] {
-  const byProject = new Map<string, NormalizedRow[]>();
-  for (const r of normalized) {
-    const list = byProject.get(r.projectId) ?? [];
-    list.push(r);
-    byProject.set(r.projectId, list);
-  }
-
-  const out: ProjectResult[] = [];
-  for (const [projectId, list] of byProject) {
-    out.push({
-      projectId,
-      reviews: list.length,
-      rawMean: mean(list.map((r) => r.raw)),
-      normalizedMean: mean(list.map((r) => r.normalized)),
-    });
-  }
-  // Highest normalized score first.
-  out.sort((a, b) => b.normalizedMean - a.normalizedMean);
-  return out;
+/**
+ * Per-judge calibration: how many scores, their mean and spread, and a flag an
+ * organizer can act on. "flat" is the judge who gave everything the same mark
+ * (no ranking signal — normalization maps them to the global mean); "harsh" and
+ * "generous" are judges whose mean sits more than 0.5 below/above everyone else.
+ */
+export function judgeStats(rows: ScoreRow[]) {
+  const globalMean = mean(rows.map((r) => r.raw));
+  const byJudge = new Map<string, number[]>();
+  for (const r of rows) byJudge.set(r.judgeId, [...(byJudge.get(r.judgeId) ?? []), r.raw]);
+  return [...byJudge.entries()]
+    .map(([judgeId, xs]) => {
+      const mu = mean(xs);
+      const sd = stddev(xs, mu);
+      // One review says nothing about a judge's habits, so flags need at least two.
+      const flag: "flat" | "harsh" | "generous" | null =
+        xs.length < 2
+          ? null
+          : sd <= FLAT_EPSILON
+            ? "flat"
+            : mu < globalMean - 0.5
+              ? "harsh"
+              : mu > globalMean + 0.5
+                ? "generous"
+                : null;
+      return {
+        judgeId,
+        count: xs.length,
+        mean: mu,
+        sd: sd <= FLAT_EPSILON ? 0 : sd,
+        offset: mu - globalMean,
+        flag,
+      };
+    })
+    .sort((a, b) => a.mean - b.mean);
 }
 
 /** Convenience: build the raw rows from DB score records + rubric. */

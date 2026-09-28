@@ -1,120 +1,176 @@
 import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
 
 import { and, eq } from "drizzle-orm";
-import { z } from "zod";
 
-import type { Identity } from "@/lib/api-auth";
-import { forbidden, isResponse, requireRole } from "@/lib/api-auth";
-import { audit } from "@/lib/audit";
-import type { Project } from "@/lib/db";
-import { db, project, teamMember } from "@/lib/db";
-import { getActiveEvent, submissionsOpen } from "@/lib/events";
+import type { Event, Project } from "@/lib/db";
+import { db, event, project, team, teamMember, track, user as userTable } from "@/lib/db";
+import { submissionsAreOpen } from "@/lib/phase";
+import { docToText } from "@/lib/rich-text";
+import { audit } from "@/lib/server/audit";
+import { canManage } from "@/lib/server/events";
+import { forbidden, handle, notFound, readBody } from "@/lib/server/http";
+import type { Identity } from "@/lib/server/identity";
+import { requireUser, resolveIdentity } from "@/lib/server/identity";
+import { projectInput } from "@/lib/server/schemas";
+import { dispatch } from "@/lib/server/webhooks";
+
+type P = { id: string };
 
 /**
- * A single project: read, edit-until-deadline, submit (T1).
- *
- * Editing is refused once the event has closed — the draft-and-edit window ends
- * at the deadline, enforced in the backend. Only a member of the owning team (or
- * an organizer/admin) may edit.
+ * GET    /api/projects/:id — a project with its team and track. Submitted
+ *        projects are public; drafts are visible to the team and organizers.
+ * PATCH  /api/projects/:id — edit (team members, until the deadline; the
+ *        event's organizers at any time). Only the fields sent are changed.
+ *        `submit: true` submits, `submit: false` withdraws back to draft.
+ * DELETE /api/projects/:id — delete a draft or withdraw a submission (team
+ *        owner before the deadline, or an organizer).
  */
 
-const updateSchema = z.object({
-  title: z.string().min(1).optional(),
-  trackId: z.string().nullable().optional(),
-  tagline: z.string().nullable().optional(),
-  summary: z.string().nullable().optional(),
-  description: z.string().nullable().optional(),
-  repoUrl: z.string().url().nullable().optional().or(z.literal("")),
-  liveUrl: z.string().url().nullable().optional().or(z.literal("")),
-  videoUrl: z.string().url().nullable().optional().or(z.literal("")),
-  thumbnailUrl: z.string().url().nullable().optional().or(z.literal("")),
-  techTags: z.array(z.string()).optional(),
-  submit: z.boolean().optional(),
+async function load(projectId: string) {
+  const [row] = await db
+    .select({ project, event })
+    .from(project)
+    .innerJoin(event, eq(event.id, project.eventId))
+    .where(eq(project.id, projectId))
+    .limit(1);
+  if (!row) throw notFound("Project not found");
+  return row;
+}
+
+async function membership(me: Identity | null, p: Project) {
+  if (!me || !p.teamId) return null;
+  const [m] = await db
+    .select({ role: teamMember.role })
+    .from(teamMember)
+    .where(and(eq(teamMember.teamId, p.teamId), eq(teamMember.userId, me.userId)))
+    .limit(1);
+  return m?.role ?? null;
+}
+
+async function editRights(me: Identity | null, p: Project, e: Event) {
+  const manager = canManage(me, e);
+  const role = await membership(me, p);
+  return {
+    manager,
+    member: role !== null,
+    owner: role === "owner",
+    canEdit: manager || (role !== null && submissionsAreOpen(e)),
+  };
+}
+
+export const GET = handle<P>(async (req: NextRequest, { id: projectId }) => {
+  const me = await resolveIdentity(req);
+  const { project: p, event: e } = await load(projectId);
+  const rights = await editRights(me, p, e);
+  const publicEvent = e.visibility === "published" || rights.manager;
+  if ((p.status !== "submitted" || !publicEvent) && !rights.member && !rights.manager) {
+    throw notFound("Project not found");
+  }
+
+  const [members, [trackRow], [teamRow]] = await Promise.all([
+    p.teamId
+      ? db
+          .select({
+            id: userTable.id,
+            name: userTable.name,
+            username: userTable.username,
+            image: userTable.image,
+            headline: userTable.headline,
+            role: teamMember.role,
+          })
+          .from(teamMember)
+          .innerJoin(userTable, eq(userTable.id, teamMember.userId))
+          .where(eq(teamMember.teamId, p.teamId))
+      : Promise.resolve([]),
+    p.trackId ? db.select().from(track).where(eq(track.id, p.trackId)) : Promise.resolve([]),
+    p.teamId
+      ? db.select({ id: team.id, name: team.name }).from(team).where(eq(team.id, p.teamId))
+      : Promise.resolve([]),
+  ]);
+
+  return {
+    project: p,
+    event: {
+      id: e.id,
+      slug: e.slug,
+      name: e.name,
+      submissionsClose: e.submissionsClose,
+      hue: e.hue,
+    },
+    track: trackRow ?? null,
+    team: teamRow ? { ...teamRow, members } : null,
+    viewer: { ...rights, submissionsOpen: submissionsAreOpen(e) },
+  };
 });
 
-async function canEdit(identity: Identity, proj: Project): Promise<boolean> {
-  if (identity.role === "organizer" || identity.role === "admin") return true;
-  if (!proj.teamId) return false;
-  const rows = await db
-    .select({ userId: teamMember.userId })
-    .from(teamMember)
-    .where(and(eq(teamMember.teamId, proj.teamId), eq(teamMember.userId, identity.userId)))
-    .limit(1);
-  return rows.length > 0;
-}
+export const PATCH = handle<P>(async (req, { id: projectId }) => {
+  const me = await requireUser(req);
+  const { project: p, event: e } = await load(projectId);
+  const rights = await editRights(me, p, e);
+  if (!rights.member && !rights.manager) throw forbidden("This is not your project");
+  if (!rights.canEdit)
+    throw forbidden("Submissions are closed; this project can no longer be edited");
 
-export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const { id } = await ctx.params;
-  const rows = await db.select().from(project).where(eq(project.id, id)).limit(1);
-  const proj = rows[0];
-  if (!proj) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  // Submitted projects are public (they show in the gallery). Drafts require the
-  // caller to be on the team or an organizer.
-  if (proj.status !== "submitted") {
-    const identity = await requireRole(req, { min: "participant" });
-    if (isResponse(identity)) return identity;
-    if (!(await canEdit(identity, proj))) return forbidden();
-  }
-  return NextResponse.json({ project: proj });
-}
-
-export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const { id } = await ctx.params;
-  const identity = await requireRole(req, { min: "participant" });
-  if (isResponse(identity)) return identity;
-
-  const rows = await db.select().from(project).where(eq(project.id, id)).limit(1);
-  const proj = rows[0];
-  if (!proj) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (!(await canEdit(identity, proj))) return forbidden("Not your project");
-
-  const activeEvent = await getActiveEvent();
-  // Deadline enforcement: no edits after close (organizers excepted so they can
-  // fix data during judging).
-  if (
-    activeEvent &&
-    !submissionsOpen(activeEvent) &&
-    identity.role !== "organizer" &&
-    identity.role !== "admin"
-  ) {
-    return forbidden("Submissions are closed; project can no longer be edited");
-  }
-
-  const parsed = updateSchema.safeParse(await req.json().catch(() => ({})));
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid body", issues: parsed.error.issues },
-      { status: 400 }
-    );
-  }
-  const b = parsed.data;
+  const raw = (await req
+    .clone()
+    .json()
+    .catch(() => ({}))) as Record<string, unknown>;
+  const b = await readBody(req, projectInput.partial());
+  const sent = (k: string) => Object.hasOwn(raw, k);
 
   const patch: Partial<Project> = { updatedAt: new Date() };
-  if (b.title !== undefined) patch.title = b.title;
-  if (b.trackId !== undefined) patch.trackId = b.trackId;
-  if (b.tagline !== undefined) patch.tagline = b.tagline;
-  if (b.summary !== undefined) patch.summary = b.summary;
-  if (b.description !== undefined) patch.description = b.description;
-  if (b.repoUrl !== undefined) patch.repoUrl = b.repoUrl || null;
-  if (b.liveUrl !== undefined) patch.liveUrl = b.liveUrl || null;
-  if (b.videoUrl !== undefined) patch.videoUrl = b.videoUrl || null;
-  if (b.thumbnailUrl !== undefined) patch.thumbnailUrl = b.thumbnailUrl || null;
-  if (b.techTags !== undefined) patch.techTags = b.techTags;
-  if (b.submit) {
+  if (sent("title") && b.title) patch.title = b.title;
+  if (sent("tagline")) patch.tagline = b.tagline ?? null;
+  if (sent("trackId")) patch.trackId = b.trackId ?? null;
+  if (sent("content")) {
+    patch.content = b.content ?? null;
+    patch.description = docToText(b.content);
+  }
+  for (const k of ["thumbnailUrl", "videoUrl", "repoUrl", "liveUrl"] as const) {
+    if (sent(k)) patch[k] = b[k] ?? null;
+  }
+  if (sent("techTags")) patch.techTags = b.techTags ?? [];
+  if (b.submit === true) {
     patch.status = "submitted";
-    patch.submittedAt = proj.submittedAt ?? new Date();
+    patch.submittedAt = p.submittedAt ?? new Date();
+  } else if (b.submit === false) {
+    patch.status = "draft";
+    patch.submittedAt = null;
   }
 
-  await db.update(project).set(patch).where(eq(project.id, id));
-  await audit({
-    eventId: proj.eventId,
-    actor: identity,
-    action: b.submit ? "project.submitted" : "project.updated",
-    target: id,
-    ipAddress: req.headers.get("x-forwarded-for"),
-  });
+  await db.update(project).set(patch).where(eq(project.id, p.id));
+  const action =
+    b.submit === true && p.status !== "submitted"
+      ? "project.submitted"
+      : b.submit === false
+        ? "project.withdrawn"
+        : "project.updated";
+  await audit({ eventId: e.id, actor: me, action, target: p.id, req });
+  dispatch(
+    action === "project.submitted" ? "project.submitted" : "project.updated",
+    { projectId: p.id },
+    e.id
+  );
 
-  return NextResponse.json({ id, status: patch.status ?? proj.status });
-}
+  const [updated] = await db.select().from(project).where(eq(project.id, p.id));
+  return { project: updated };
+});
+
+export const DELETE = handle<P>(async (req, { id: projectId }) => {
+  const me = await requireUser(req);
+  const { project: p, event: e } = await load(projectId);
+  const rights = await editRights(me, p, e);
+  if (!rights.manager && !(rights.owner && submissionsAreOpen(e))) {
+    throw forbidden("Only the team owner can delete a project, and only before the deadline");
+  }
+  await db.delete(project).where(eq(project.id, p.id));
+  await audit({
+    eventId: e.id,
+    actor: me,
+    action: "project.deleted",
+    target: p.id,
+    detail: { title: p.title },
+    req,
+  });
+  return { ok: true };
+});

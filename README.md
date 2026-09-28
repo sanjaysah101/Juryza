@@ -1,11 +1,15 @@
 # Juryza
 
-**A self-hostable, API-first hackathon submission & judging portal.** Takes a
-project from submission through weighted, backend-isolated judging to normalized,
-published results — with an audit trail an organizer can actually read.
+**The self-hosted hackathon platform with judging you can defend.**
 
-Built for [DOGFOOD 2026](https://dogfoodhack.com). One command to a seeded,
-working portal, offline.
+Run the whole event — registration, teams, Notion-style project write-ups,
+judge panels, weighted scoring, normalization, pairwise ranking, community
+voting, leaderboards, certificates — from one `docker compose up`, offline, on
+one machine. Every rule is enforced by the API, and every number is explained.
+
+Built for [DOGFOOD 2026](https://dogfoodhack.com). MIT licensed.
+
+---
 
 ## Run it
 
@@ -13,13 +17,36 @@ working portal, offline.
 docker compose up
 ```
 
-That's it. This:
-1. starts PostgreSQL 18 and the portal,
-2. pushes the schema, seeds from `fixtures.json`,
-3. writes `.dogfood.toml` (with fresh bearer tokens) to the repo root,
-4. serves the portal at **http://localhost:8080**.
+Then open **http://localhost:8080** and sign in with one of the demo buttons on
+the login page. The boot:
 
-No cloud account, no hosted database, no external API. Runs with the network off.
+1. starts PostgreSQL 18 and the portal,
+2. pushes the schema and seeds — the DOGFOOD fixture event (41 projects, 30
+   judges, 126 scores, submissions closed, community voting open) **and** a live
+   sandbox event with submissions open,
+3. writes `.dogfood.toml` with fresh API tokens,
+4. serves the portal on port 8080.
+
+No cloud account, hosted database or external API. Reseed from scratch with
+`SEED_RESET=1 docker compose up`; wipe with `docker compose down -v`. Every boot
+re-mints the checker tokens in `.dogfood.toml`, so the file is always valid.
+
+> **Upgrading from an earlier checkout?** The schema changed substantially. Run
+> `docker compose down -v` once (or `SEED_RESET=1 docker compose up --build`)
+> so the database is re-created.
+
+### Demo accounts
+
+| Role | Email | Password | Try |
+| --- | --- | --- | --- |
+| Organizer | `organizer@juryza.test` | `organizer-password-123` | Organizer console for both events: results, judges, assignments, integrity |
+| Judge | `judge.a@juryza.test` | `judge-a-password-123` | Scoring console and pairwise mode |
+| Judge | `judge.b@juryza.test` | `judge-b-password-123` | Proves judges can't see each other's scores |
+| Participant | `participant@juryza.test` | `participant-password-123` | Team "Night Owls" and its draft project in the editor |
+| Admin | `admin@juryza.test` | `admin-password-123` | Users and roles |
+
+Fixture judges sign in with `judge-password-123`, fixture team members with
+`member-password-123`.
 
 ### Verify it
 
@@ -27,94 +54,141 @@ No cloud account, no hosted database, no external API. Runs with the network off
 python3 run.py .dogfood.toml
 ```
 
-The committed [`acceptance-report.txt`](./acceptance-report.txt) is the output of
-this against the containerized build.
+The committed [`acceptance-report.txt`](./acceptance-report.txt) is that output
+against the containerized build (run on port 8081 alongside an older local
+stack; the image and seed are identical). The suite has checks for T1 and T2 only, so it
+reports T3/T4 as "claimed but not verified" for every team; the T3/T4 behaviour
+is covered by our own integration tests (below) and is demonstrable in the UI.
 
-### Test logins (printed by the seed, also in the portal logs)
+## A tour in five minutes
 
-| Role | Email | Password |
-| --- | --- | --- |
-| Organizer | `organizer@juryza.test` | `organizer-password-123` |
-| Judge A | `judge.a@juryza.test` | `judge-a-password-123` |
-| Judge B | `judge.b@juryza.test` | `judge-b-password-123` |
-| Participant | `participant@juryza.test` | `participant-password-123` |
+1. **Landing → Events → Open Build 2026.** Overview, rules, tracks, prizes,
+   judging criteria with weights, the judging panel and the timeline.
+2. **Sign in as the participant.** Dashboard → *Issue Radar* opens in the
+   editor: type `/` for blocks, select text for formatting, set the track and
+   links in the page properties. It autosaves. Submit it.
+3. **Sign in as the organizer → My events → Open Build 2026.** Invite a judge,
+   generate assignments (preview first — conflicts of interest and track limits
+   are respected), watch progress on the overview dashboard.
+4. **Sample Hack 2026 → Results.** Raw vs normalized ranking with rank changes,
+   each judge's calibration (the fixture's flat judge is flagged), the pairwise
+   ranking. *Submissions* surfaces the duplicate "Dry Harbour" submission.
+   Publish (Juryza makes you close voting first), then open the public
+   leaderboard and *Compare* any project with its closest rivals.
+5. **API.** Settings → API tokens → create one, then try the curl on
+   `/docs/api`. Everything you just clicked is an API call.
 
-## What it does, by tier
+## What it does
 
-**T1 — core.** Auth + sessions; a real five-role model (visitor, participant,
-judge, organizer, admin); event creation with dates, tracks and prizes; team
-formation by invite link; project submission with draft-and-edit until the
-deadline; **deadline enforcement in the backend**; public gallery with search and
-track filter.
+### T1 — core
+- Email/password accounts and sessions; five roles (visitor, participant,
+  judge, organizer, admin) with **per-event** permissions on top.
+- Events with tracks, prizes (overall, per track, community), rich overview and
+  rules, dates for every phase, draft/published visibility. Many events per
+  install.
+- Teams by invite link (resettable), size limits, "looking for members" team
+  finder, rosters that lock at the deadline.
+- Projects written in a **Notion-style block editor** (slash menu, markdown
+  shortcuts, to-dos, code, images, floating toolbar) with Notion-like
+  properties, autosave, draft → submit → withdraw until the deadline.
+- **Deadline enforced in the backend** for creating, editing, submitting and
+  team changes.
+- Public gallery with search, track and tech-tag filters.
 
-**T2 — judging.** Judge assignment (round-robin or batch, track-eligible); a
-**weighted, organizer-configurable rubric**; **backend-enforced role isolation**
-— a judge cannot read another judge's scores even with a raw `curl`; a live
-organizer progress dashboard (who hasn't started); **documented cross-judge
-z-score normalization**; CSV export.
+### T2 — judging
+- Judge panels per event: invite by email (bound, single-use links), limit
+  judges to tracks.
+- Assignment planner — balanced or batch, **conflict-of-interest aware**, track
+  aware, idempotent, with a dry-run preview and coverage report.
+- **Weighted, organizer-configurable rubric**; re-weighting recomputes
+  instantly.
+- Scoring console with keyboard shortcuts; **judges cannot read each other's
+  scores — enforced in the API** (403, audited).
+- Live organizer dashboard: KPIs, submissions per day, projects per track,
+  judge progress (who hasn't started), activity feed.
+- **Per-judge z-score normalization**, documented and defended with a proof on
+  the fixture data ([JUDGING.md](./JUDGING.md)); judge calibration flags.
+- CSV (and JSON) export at every stage: participants, teams, projects,
+  assignments, scores, results, votes, comments, audit.
 
-**T3 — public.** Community voting with **quadratic weighting**; comments;
-**results hidden until an organizer publishes**; randomized ballot order;
-anti-abuse (rate limits, duplicate detection, a readable audit trail).
+### T3 — public
+- Community voting with **configurable access** — signed-in, email-verified
+  (one-time code, domain allowlist) or open link.
+- **Quadratic voting with a per-voter credit budget**, enforced server-side.
+- Comments on projects; moderation by organizers.
+- **Results hidden** from everyone but the event's organizers until published;
+  publishing is refused while voting is open.
+- **Ballots randomized per voter**; no self-votes.
+- Anti-abuse: rate limits, duplicate detection, per-network caps, integrity
+  dashboard, full audit trail.
 
-**T4 — stretch.** A documented **REST API with an OpenAPI 3.1 spec**
-(`/api/openapi.json`, 25 endpoints); **webhooks** (HMAC-signed); **signed,
-publicly verifiable certificates**; **bulk JSON import/export** for migration in
-and out.
+### T4 — stretch
+- **REST API for every UI action** — the UI itself is built on it — with an
+  **OpenAPI 3.1** spec at `/api/openapi.json` and a reference at `/docs/api`;
+  personal API tokens.
+- **Webhooks** (per-subscription HMAC signatures, delivery log, test pings).
+- **Certificates** for judges and winners — **signed and publicly verifiable**
+  at `/certificates/<serial>`, printable.
+- **Embeddable gallery widget** (`<script src="/embed.js">`).
+- **Bulk import and export** — a bundle format that is a superset of the
+  fixtures file, so exports re-import and the fixtures import directly.
 
-**Bonuses.** Pairwise **Bradley–Terry** judging mode; **normalization proof** on
-the fixture data (see [JUDGING.md](./JUDGING.md)); a written
-[threat model](./THREAT-MODEL.md); **API-first** (the OpenAPI spec above).
+### Beyond the tiers
+- **Automatic project comparison**: pick one project and Juryza finds its
+  closest rivals (content similarity + neighbours in the ranking) and compares
+  them side by side — per-criterion means, normalized scores, votes, pairwise
+  head-to-head, content overlap.
+- **Duplicate and look-alike detection** (TF-IDF cosine + same-repo/title).
+- **Pairwise judging** with Bradley–Terry ranking and active pair selection.
+- Leaderboards with podium, prizes, per-track, community and pairwise views.
+- Public profiles with skills, projects, judging history and certificates.
+- Command palette (⌘K), light/dark themes, responsive layouts.
 
-## The judging integrity story (the hard part)
-
-- **Role isolation is in the backend, not the template.** `GET /api/judge/scores`
-  returns only the caller's scores; `?judge=<peer>` is refused 403; a participant
-  is 403. Proven with `curl`, not a hidden button.
-- **Normalization is documented and defended.** Per-judge z-score, with the
-  "judge who marked everything a 3" case handled explicitly. The proof — raw
-  scores, normalized scores, and the rank changes on the fixture data — is in
-  [JUDGING.md](./JUDGING.md), generated by the same code the endpoints use.
-- **There is an audit trail** at `/api/organizer/audit` an organizer can read
-  without a database client.
+### Bonus challenges
+Normalization proof ([JUDGING.md §4](./JUDGING.md)) · pairwise mode with
+Bradley–Terry ([§5](./JUDGING.md)) · threat model ([THREAT-MODEL.md](./THREAT-MODEL.md)) ·
+API-first with a published OpenAPI spec.
 
 ## Documentation
 
 | File | What |
 | --- | --- |
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | The shape of the system and why |
-| [DATA-MODEL.md](./DATA-MODEL.md) | Schema, and the import/export paths |
-| [JUDGING.md](./JUDGING.md) | Assignment, scoring maths, normalization proof, pairwise |
-| [THREAT-MODEL.md](./THREAT-MODEL.md) | Voting & submission abuse, honest limits |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | System shape, trust boundary, decisions |
+| [DATA-MODEL.md](./DATA-MODEL.md) | Schema and the import/export paths |
+| [JUDGING.md](./JUDGING.md) | Assignment, scoring maths, normalization proof, pairwise, voting |
+| [THREAT-MODEL.md](./THREAT-MODEL.md) | Attacks stopped and not stopped |
 
-## Stack
-
-Next.js 16 (App Router) · PostgreSQL 18 + Drizzle ORM · Better Auth (admin
-plugin) · TanStack Query · Tailwind v4 + shadcn/ui (Base UI) · Bun + Turborepo.
-See ARCHITECTURE.md for the reasoning.
-
-## Development (without Docker)
+## Development
 
 ```sh
 bun install
-# start a local Postgres, then:
-export DATABASE_URL=postgres://juryza:juryza@localhost:5432/juryza
-bun run --cwd apps/juryza db:push
-bun run --cwd apps/juryza seed
-bun run --cwd apps/juryza dev     # http://localhost:3000
+docker run -d --name juryza-pg -p 5432:5432 -e POSTGRES_USER=juryza -e POSTGRES_PASSWORD=juryza -e POSTGRES_DB=juryza postgres:18-alpine
+cd apps/juryza
+bun run db:push && bun run seed
+bun run dev          # http://localhost:3000
 ```
 
-Quality gate: `bun run lint` · `bun run typecheck` · `bun run build`.
+Quality gates (from the repo root): `bun run typecheck` · `bun run lint` ·
+`bun run test` · `bun run build`. API integration tests run against a live
+server: `JURYZA_TEST_URL=http://localhost:3000 bun run --cwd apps/juryza test`.
+
+## Stack
+
+Next.js 16 (App Router, React 19, React Compiler) · PostgreSQL 18 + Drizzle ·
+Better Auth · TanStack Query · Tiptap 3 · Tailwind v4 + shadcn/ui on Base UI ·
+Bun + Turborepo. Reasons in [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Honest limits
 
-- Community voting is **raised-cost, not attack-proof** against a determined
-  Sybil adversary (open sign-up, no email verification in the offline demo). See
-  THREAT-MODEL.md for the full list and production fixes.
-- The rate limiter is in-process (single container). Multi-instance needs shared
-  storage — the code isolates it behind one module.
-- Single-tenant per deployment; no cross-organizer isolation.
+- Community voting is raised-cost, not Sybil-proof, in open or account mode;
+  use email-verified voting with a domain allowlist when it matters.
+- Rate limits live in process memory: fine for one container, not for several.
+- No outbound email (the build runs offline): verification codes and password
+  reset links are written to the server log.
+- An event's organizers are trusted: their actions are audited, not prevented.
+- Normalization assumes each judge saw a representative slice of projects; with
+  very few reviews per judge, prefer pairwise mode (see JUDGING.md).
 
 ## License
 
-[MIT](./LICENSE). The repo is yours — no CLA, no assignment.
+[MIT](./LICENSE).

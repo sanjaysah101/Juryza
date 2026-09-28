@@ -13,6 +13,11 @@
     "typecheck": {
       "dependsOn": ["^typecheck"]
     },
+    "test": {
+      "dependsOn": ["^test"],
+      "env": ["JURYZA_TEST_URL"],
+      "cache": false
+    },
     "dev": {
       "cache": false,
       "persistent": true

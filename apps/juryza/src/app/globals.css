@@ -4,14 +4,93 @@
    already scans the @juryza/ui package's source. */
 @source "../";
 
-/* @juryza/form-builder renders Tailwind classes of its own (schema-form.tsx,
-   descriptor-field.tsx, field-renderer.tsx) but isn't covered by any other
-   @source — it's a separate workspace package, not part of @juryza/ui.
-   Without this, classes only used inside form-builder are silently never
-   generated (they don't error; they just have no effect at runtime). */
-@source "../../../../packages/form-builder/src/**/*.{ts,tsx}";
-
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+}
+
+/* Rich text (editor and read-only rendering) — typography for ProseMirror output. */
+@layer components {
+  .rich-content {
+    @apply text-[0.95rem] leading-7 text-foreground;
+  }
+  .rich-content > * + * {
+    @apply mt-3;
+  }
+  .rich-content h1 {
+    @apply mt-8 text-3xl font-semibold tracking-tight first:mt-0;
+  }
+  .rich-content h2 {
+    @apply mt-7 text-2xl font-semibold tracking-tight first:mt-0;
+  }
+  .rich-content h3 {
+    @apply mt-6 text-lg font-semibold first:mt-0;
+  }
+  .rich-content a {
+    @apply text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary;
+  }
+  .rich-content ul {
+    @apply list-disc pl-6;
+  }
+  .rich-content ol {
+    @apply list-decimal pl-6;
+  }
+  .rich-content li > p {
+    @apply my-0;
+  }
+  .rich-content li + li {
+    @apply mt-1;
+  }
+  .rich-content blockquote {
+    @apply border-l-2 border-primary/50 pl-4 text-muted-foreground italic;
+  }
+  .rich-content code {
+    @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em];
+  }
+  .rich-content pre {
+    @apply overflow-x-auto rounded-lg border bg-muted p-4 font-mono text-sm leading-6;
+  }
+  .rich-content pre code {
+    @apply bg-transparent p-0;
+  }
+  .rich-content hr {
+    @apply my-6 border-border;
+  }
+  .rich-content mark {
+    @apply rounded-sm bg-warning/40 px-0.5 text-foreground;
+  }
+  .rich-content img {
+    @apply max-h-[28rem] rounded-lg border;
+  }
+  .rich-content img.ProseMirror-selectednode {
+    @apply ring-2 ring-ring;
+  }
+  .rich-content ul[data-type="taskList"] {
+    @apply list-none pl-0;
+  }
+  .rich-content ul[data-type="taskList"] li {
+    @apply flex items-start gap-2;
+  }
+  .rich-content ul[data-type="taskList"] li > label {
+    @apply mt-1 flex shrink-0 select-none;
+  }
+  .rich-content ul[data-type="taskList"] li > label input {
+    @apply size-4 accent-primary;
+  }
+  .rich-content ul[data-type="taskList"] li > div {
+    @apply flex-1;
+  }
+  .rich-content ul[data-type="taskList"] li[data-checked="true"] > div {
+    @apply text-muted-foreground line-through;
+  }
+  .rich-editable {
+    @apply min-h-64;
+  }
+  .rich-editable p.is-empty::before,
+  .rich-editable h1.is-empty::before,
+  .rich-editable h2.is-empty::before,
+  .rich-editable h3.is-empty::before {
+    content: attr(data-placeholder);
+    @apply pointer-events-none float-left h-0 text-muted-foreground/60;
+  }
 }

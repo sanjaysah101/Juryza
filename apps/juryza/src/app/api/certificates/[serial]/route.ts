@@ -1,43 +1,40 @@
-import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
-
 import { eq } from "drizzle-orm";
 
-import { certificate, db } from "@/lib/db";
-import { canonicalize, verify } from "@/lib/signing";
+import { certificate, db, event, user as userTable } from "@/lib/db";
+import { verifyCertificate } from "@/lib/server/certificates";
+import { handle, notFound } from "@/lib/server/http";
 
 /**
- * Public certificate verification (T4).
- *
- * Anyone — no account — can fetch a certificate by serial and see whether its
- * signature is valid. The endpoint recomputes the HMAC over the same canonical
- * fields and compares, so a tampered `reviewsCompleted` or `subjectName` makes
- * `valid: false`. This is what "publicly verifiable" means: trust the maths, not
- * the pixels.
+ * GET /api/certificates/:serial — public verification, no account needed.
+ * Recomputes the HMAC over the stored record; `valid: false` means the record
+ * was altered after it was issued.
  */
-export async function GET(_req: NextRequest, ctx: { params: Promise<{ serial: string }> }) {
-  const { serial } = await ctx.params;
-  const rows = await db.select().from(certificate).where(eq(certificate.serial, serial)).limit(1);
-  const cert = rows[0];
-  if (!cert) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const canonical = canonicalize({
+export const GET = handle<{ serial: string }>(async (_req, { serial }) => {
+  const [row] = await db
+    .select({
+      cert: certificate,
+      eventName: event.name,
+      eventSlug: event.slug,
+      username: userTable.username,
+    })
+    .from(certificate)
+    .innerJoin(event, eq(event.id, certificate.eventId))
+    .leftJoin(userTable, eq(userTable.id, certificate.subjectId))
+    .where(eq(certificate.serial, serial.toUpperCase()))
+    .limit(1);
+  if (!row) throw notFound("No certificate with that serial");
+  const { cert } = row;
+  return {
     serial: cert.serial,
-    event: cert.eventId,
-    subject: cert.subjectId,
     kind: cert.kind,
-    reviews: cert.reviewsCompleted,
-  });
-  const valid = verify(canonical, cert.signature);
-
-  return NextResponse.json({
-    serial: cert.serial,
     subjectName: cert.subjectName,
-    kind: cert.kind,
+    subjectUsername: row.username,
     statement: cert.statement,
     reviewsCompleted: cert.reviewsCompleted,
+    event: { name: row.eventName, slug: row.eventSlug },
     issuedAt: cert.issuedAt,
     signature: cert.signature,
-    valid,
-  });
-}
+    algorithm: "HMAC-SHA256",
+    valid: verifyCertificate(cert),
+  };
+});

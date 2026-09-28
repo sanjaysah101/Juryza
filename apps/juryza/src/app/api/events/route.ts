@@ -1,113 +1,133 @@
 import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
 
-import { desc, eq } from "drizzle-orm";
-import { z } from "zod";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 
-import { isResponse, requireRole } from "@/lib/api-auth";
-import { audit } from "@/lib/audit";
-import { db, event, prize, rubricCriterion, track } from "@/lib/db";
+import { db, event, project, registration, rubricCriterion, track } from "@/lib/db";
 import { id } from "@/lib/ids";
+import { docToText } from "@/lib/rich-text";
+import { audit } from "@/lib/server/audit";
+import { conflict, created, handle, readBody } from "@/lib/server/http";
+import { requireRole, resolveIdentity } from "@/lib/server/identity";
+import { eventInput } from "@/lib/server/schemas";
+import { toDate } from "@/lib/server/validation";
+import { dispatch } from "@/lib/server/webhooks";
 
 /**
- * Events (T1).
- *
- * `GET` lists events (public). `POST` creates an event with configurable dates,
- * tracks, prizes and a weighted rubric — organizer only. The weighted rubric is
- * the key differentiator called out in the spec: organizers set both the
- * criteria and their weights.
+ * GET  /api/events — published events (plus the caller's own drafts), newest
+ *      first, with project and participant counts.
+ * POST /api/events — create an event (organizer). Starts as a draft unless
+ *      `visibility: "published"`; ships with a sensible default rubric.
  */
 
-const createSchema = z.object({
-  name: z.string().min(1),
-  slug: z.string().min(1),
-  description: z.string().optional(),
-  submissionsOpen: z.string().datetime().optional(),
-  submissionsClose: z.string().datetime(),
-  votingOpen: z.string().datetime().optional(),
-  votingClose: z.string().datetime().optional(),
-  tracks: z.array(z.string()).default([]),
-  prizes: z
-    .array(
-      z.object({ name: z.string(), amount: z.string().optional(), rank: z.number().optional() })
-    )
-    .default([]),
-  rubric: z
-    .array(
-      z.object({
-        key: z.string(),
-        label: z.string(),
-        description: z.string().optional(),
-        weight: z.number().positive().default(1),
-      })
-    )
-    .default([]),
+export const GET = handle(async (req: NextRequest) => {
+  const me = await resolveIdentity(req);
+  const visible =
+    me?.role === "admin"
+      ? undefined
+      : me
+        ? or(eq(event.visibility, "published"), eq(event.createdBy, me.userId))
+        : eq(event.visibility, "published");
+
+  const rows = await db.select().from(event).where(visible).orderBy(desc(event.submissionsClose));
+  const ids = rows.map((r) => r.id);
+  const [projectCounts, participantCounts] = ids.length
+    ? await Promise.all([
+        db
+          .select({ eventId: project.eventId, n: sql<number>`count(*)::int` })
+          .from(project)
+          .where(and(inArray(project.eventId, ids), eq(project.status, "submitted")))
+          .groupBy(project.eventId),
+        db
+          .select({ eventId: registration.eventId, n: sql<number>`count(*)::int` })
+          .from(registration)
+          .where(inArray(registration.eventId, ids))
+          .groupBy(registration.eventId),
+      ])
+    : [[], []];
+  const pc = new Map(projectCounts.map((r) => [r.eventId, r.n]));
+  const rc = new Map(participantCounts.map((r) => [r.eventId, r.n]));
+  return {
+    events: rows.map((e) => ({
+      ...e,
+      projectCount: pc.get(e.id) ?? 0,
+      participantCount: rc.get(e.id) ?? 0,
+    })),
+  };
 });
 
-export async function GET() {
-  const rows = await db.select().from(event).orderBy(desc(event.createdAt));
-  return NextResponse.json({ events: rows });
-}
+export const POST = handle(async (req: NextRequest) => {
+  const me = await requireRole(req, "organizer");
+  const b = await readBody(req, eventInput);
 
-export async function POST(req: NextRequest) {
-  const identity = await requireRole(req, { min: "organizer" });
-  if (isResponse(identity)) return identity;
-
-  const parsed = createSchema.safeParse(await req.json().catch(() => ({})));
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid body", issues: parsed.error.issues },
-      { status: 400 }
-    );
-  }
-  const b = parsed.data;
-
-  const existing = await db
+  const [taken] = await db
     .select({ id: event.id })
     .from(event)
     .where(eq(event.slug, b.slug))
     .limit(1);
-  if (existing.length > 0) {
-    return NextResponse.json({ error: "Slug already in use" }, { status: 409 });
-  }
+  if (taken) throw conflict("That URL is already taken — choose another slug");
 
   const eventId = id.event();
-  await db.insert(event).values({
-    id: eventId,
-    name: b.name,
-    slug: b.slug,
-    description: b.description ?? null,
-    submissionsOpen: b.submissionsOpen ? new Date(b.submissionsOpen) : null,
-    submissionsClose: new Date(b.submissionsClose),
-    votingOpen: b.votingOpen ? new Date(b.votingOpen) : null,
-    votingClose: b.votingClose ? new Date(b.votingClose) : null,
-    createdBy: identity.userId,
+  await db.transaction(async (tx) => {
+    await tx.insert(event).values({
+      id: eventId,
+      slug: b.slug,
+      name: b.name,
+      tagline: b.tagline ?? null,
+      description: docToText(b.content, 500) || b.tagline || null,
+      content: b.content ?? null,
+      rules: b.rules ?? null,
+      mode: b.mode,
+      location: b.location ?? null,
+      hue: b.hue,
+      visibility: b.visibility,
+      submissionsOpen: toDate(b.submissionsOpen),
+      submissionsClose: new Date(b.submissionsClose),
+      judgingClose: toDate(b.judgingClose),
+      votingOpen: toDate(b.votingOpen),
+      votingClose: toDate(b.votingClose),
+      maxTeamSize: b.maxTeamSize,
+      reviewsPerProject: b.reviewsPerProject,
+      votingAccess: b.votingAccess,
+      votingEmailDomains: b.votingEmailDomains,
+      voteBudget: b.voteBudget,
+      createdBy: me.userId,
+    });
+    if (b.tracks.length) {
+      await tx
+        .insert(track)
+        .values(b.tracks.map((name, position) => ({ id: id.track(), eventId, name, position })));
+    }
+    await tx.insert(rubricCriterion).values(
+      [
+        {
+          key: "impact",
+          label: "Impact",
+          weight: 0.3,
+          description: "Does it solve a real problem for real people?",
+        },
+        {
+          key: "execution",
+          label: "Execution",
+          weight: 0.35,
+          description: "Does it work? Is it well built?",
+        },
+        {
+          key: "innovation",
+          label: "Innovation",
+          weight: 0.2,
+          description: "Is the idea or approach new?",
+        },
+        {
+          key: "presentation",
+          label: "Presentation",
+          weight: 0.15,
+          description: "Is it clearly explained and demoed?",
+        },
+      ].map((c, position) => ({ ...c, id: id.criterion(), eventId, position }))
+    );
   });
 
-  for (const name of b.tracks) {
-    await db.insert(track).values({ id: id.track(), eventId, name });
-  }
-  for (const [i, p] of b.prizes.entries()) {
-    await db.insert(prize).values({
-      id: id.prize(),
-      eventId,
-      name: p.name,
-      amount: p.amount ?? null,
-      rank: p.rank ?? i + 1,
-    });
-  }
-  for (const [i, c] of b.rubric.entries()) {
-    await db.insert(rubricCriterion).values({
-      id: id.criterion(),
-      eventId,
-      key: c.key,
-      label: c.label,
-      description: c.description ?? null,
-      weight: c.weight,
-      position: i,
-    });
-  }
-
-  await audit({ eventId, actor: identity, action: "event.created", target: eventId });
-  return NextResponse.json({ id: eventId }, { status: 201 });
-}
+  await audit({ eventId, actor: me, action: "event.created", target: eventId, req });
+  dispatch("event.created", { name: b.name, slug: b.slug }, eventId);
+  return created({ id: eventId, slug: b.slug });
+});

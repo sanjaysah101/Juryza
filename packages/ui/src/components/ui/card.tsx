@@ -1,6 +1,6 @@
 import type * as React from "react";
 
-import { cn } from "cn";
+import { cn } from "@juryza/ui/lib/utils";
 
 function Card({
   className,

@@ -1,14 +1,10 @@
 import { customAlphabet, nanoid } from "nanoid";
 
 /**
- * Prefixed, URL-safe id generators.
- *
- * Domain rows use a short human-scannable prefix (`evt_`, `prj_`, `tm_`, …) so a
- * value read from a log or a CSV tells you what it is. Seeded fixture rows keep
- * their original ids from `fixtures.json`; only newly created rows use these.
+ * Prefixed, URL-safe ids. A value read from a log or a CSV tells you what it
+ * is (`evt_…`, `prj_…`). Seeded fixture rows keep their original ids.
  */
-const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
-const short = customAlphabet(alphabet, 12);
+const short = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", 12);
 
 export const id = {
   event: () => `evt_${short()}`,
@@ -20,11 +16,17 @@ export const id = {
   assignment: () => `asg_${short()}`,
   score: () => `scr_${short()}`,
   vote: () => `vote_${short()}`,
+  voter: () => `vtr_${short()}`,
   pairwise: () => `pw_${short()}`,
   comment: () => `cmt_${short()}`,
+  announcement: () => `ann_${short()}`,
+  invite: () => `inv_${short()}`,
   audit: () => `log_${short()}`,
+  webhook: () => `whk_${short()}`,
+  delivery: () => `dlv_${short()}`,
+  certificate: () => `crt_${short()}`,
   apiToken: () => `tok_${short()}`,
 };
 
-/** Opaque, high-entropy secrets: bearer tokens and team invite links. */
-export const secretToken = () => nanoid(32);
+/** Opaque, high-entropy secrets: bearer tokens, invite links, webhook secrets. */
+export const secretToken = (size = 32) => nanoid(size);

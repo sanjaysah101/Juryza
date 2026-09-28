@@ -1,113 +1,140 @@
 # DATA-MODEL.md — schema, and the way in and out
 
-The full schema is one file: `apps/juryza/src/lib/db/schema.ts` (Drizzle,
-PostgreSQL). Every id is a text string with a short type prefix (`evt_`, `prj_`,
-`tm_`, …) so a value read from a log or CSV tells you what it is; seeded fixture
-rows keep their original ids (`prj_01`, `jdg_03`) so foreign keys line up with
-the acceptance suite.
+The whole schema is one file: `apps/juryza/src/lib/db/schema.ts` (Drizzle,
+PostgreSQL 18). Every id is text with a type prefix (`evt_`, `prj_`, `tm_`,
+`scr_` …) so a value in a log or CSV says what it is; imported rows keep their
+original ids when free (fixture ids such as `prj_01` survive), so references
+line up with the source data.
 
 ## Entity relationship
 
 ```
-user ──1:N── team_member ──N:1── team ──N:1── event
-  │                                   │           │
-  │ (role: visitor|participant|       │           ├─1:N─ track
-  │  judge|organizer|admin)           │           ├─1:N─ prize
-  │                                   │           └─1:N─ rubric_criterion (weighted)
-  ├─1:N── api_token (bearer creds)    │
-  ├─1:N── judge_tracks ──► track      └─1:N─ project ──N:1── track
-  │                                              │
-  ├─1:N── assignment ──► project ◄───────────────┤ (judge ↔ project)
-  ├─1:N── score      ──► project ◄───────────────┤ (unique judge+project)
-  ├─1:N── pairwise_vote (winner, loser) ─────────┤
-  └─1:N── certificate                             │
-                                       vote ──────┤ (unique project+voter_key)
-                                       comment ───┤
-                        webhook ─1:N─ webhook_delivery
-                        audit_log (append-only)
+                               ┌─ track ◄──────────────┐
+                               ├─ prize (overall|track|community)
+                               ├─ rubric_criterion (weighted)
+ event ─────────────────────── ├─ registration ──► user
+   │                           ├─ announcement
+   │                           ├─ event_judge ──► user   (panel + track limits)
+   │                           ├─ judge_invite            (email-bound link)
+   │                           ├─ webhook ─► webhook_delivery
+   │                           └─ certificate ──► user
+   │
+   ├─ team ─── team_member ──► user
+   │     └──── project ────────────────────────┐
+   │              ├─ assignment  (judge, project, unique)
+   │              ├─ score       (judge, project, unique; marks per criterion)
+   │              ├─ pairwise_vote (judge, winner, loser)
+   │              ├─ vote        (voter_key, project, unique; quadratic votes)
+   │              └─ comment
+   ├─ voter (email-verified voting sessions)
+   └─ audit_log (append-only)
+
+ user ─ session, account, verification (Better Auth) · api_token (hashed)
 ```
 
 ## Tables
 
-### Identity (owned by Better Auth + admin plugin)
-- **user** — `id, name, email, emailVerified, role, banned, …`. `role` is the
-  five-role model; default `participant`. A *visitor* is an unauthenticated
-  request, not a stored role.
+### Identity
+- **user** — Better Auth's user plus the platform `role`
+  (`participant | judge | organizer | admin`; a visitor is simply
+  unauthenticated) and the public profile: `username` (unique handle used in
+  `/u/<username>` and `?judge=` selectors), `headline, bio, location,
+  websiteUrl, githubUrl, skills[], lookingForTeam`, `banned`.
 - **session, account, verification** — Better Auth's standard tables.
-- **api_token** — `token, userId, label`. Long-lived bearer credentials; the four
-  seeded ones are what the acceptance checker uses.
+- **api_token** — `tokenHash` (SHA-256), `prefix` (for display), `label`,
+  `lastUsedAt`. The raw token is shown once and never stored.
 
-### Event configuration
-- **event** — dates (`submissionsOpen/Close`, `votingOpen/Close`),
-  `resultsPublished`. The seeded fixture event has a **past** submissions close
-  (so submissions are refused, per the acceptance check) and an **open** voting
-  window (so T3 is demonstrable).
-- **track**, **prize** — per-event, organizer-defined.
-- **rubric_criterion** — `key, label, weight, position`. The **weighted** rubric;
-  weights are arbitrary positive numbers, normalized to sum to 1 at compute time.
-- **judge_tracks** — which tracks a judge may review (empty = generalist). Drives
-  track-isolated assignment.
+### Events
+- **event** — `slug`, `name`, `tagline`, rich `content` (overview) and `rules`
+  (editor JSON), plain `description` (search), `mode`/`location`, cover `hue`,
+  `visibility` (`draft|published`), the lifecycle dates
+  (`submissionsOpen/Close`, `judgingClose`, `votingOpen/Close`),
+  `resultsPublished`, and configuration: `maxTeamSize`, `reviewsPerProject`,
+  `votingAccess` (`open|email|authenticated`), `votingEmailDomains[]`,
+  `voteBudget`, `createdBy` (the managing organizer).
+  The phase is **derived** from dates (`lib/phase.ts`), never stored, so it
+  cannot drift from the deadline checks.
+- **track** — categories, ordered.
+- **prize** — awarded by overall judged rank, rank within a track, or community
+  vote. Winners are computed, not stored.
+- **rubric_criterion** — `key, label, description, weight, position`. Weights
+  are relative; marks are stored per `key`, so re-weighting never invalidates
+  them.
+- **registration** — who takes part. Creating or joining a team registers you.
+- **announcement** — organizer updates, optionally pinned.
 
-### Submissions
-- **team** — per event, with a single `inviteToken` (invite-link formation; no
-  heavyweight invitation/acceptance flow by design).
-- **team_member** — `(teamId, userId)` PK, role owner|member.
-- **project** — the full submission field set (title, tagline, summary,
-  description, thumbnail, gallery, video/repo/live URLs, tech tags, custom
-  answers), plus `status` (draft|submitted) and `submittedAt`.
+### Teams and projects
+- **team** — `name, description, lookingForMembers, inviteToken` (the invite
+  link capability; resettable).
+- **team_member** — `(team, user)`, `role owner|member`. One team per person per
+  event is enforced by the API.
+- **project** — one per team: `title, tagline`, rich `content` plus derived plain
+  `description`, `thumbnailUrl, repoUrl, liveUrl, videoUrl, techTags[]`,
+  `status draft|submitted`, `submittedAt`.
 
 ### Judging
-- **assignment** — `(judgeId, projectId)` unique. Who reviews what.
-- **score** — `(judgeId, projectId)` unique; `criteria` is a JSON map of
-  per-criterion marks. Aggregates are computed on read, never stored.
-- **pairwise_vote** — append-only `(winner, loser)` comparisons for Bradley–Terry.
+- **event_judge** — the panel; `trackIds[]` limits a judge to tracks (empty =
+  all).
+- **judge_invite** — `email, token, trackIds, acceptedBy/At`.
+- **assignment** — `(judge, project)` unique, `batch`.
+- **score** — `(judge, project)` unique; `criteria` is `{ key: 1..5 }`. Weighted
+  and normalized values are computed on read (`lib/server/results.ts`).
+- **pairwise_vote** — append-only verdicts for Bradley–Terry.
 
-### Public (T3)
-- **vote** — `(projectId, voterKey)` unique; `credits` for quadratic tally.
-- **comment** — gallery comments.
+### Community
+- **vote** — `(project, voterKey)` unique, `votes` (cost = votes²),
+  `ipAddress`. `voterKey` is `user:<id>`, `email:<address>` or `anon:<hash>`.
+- **voter** — email-gated voting: hashed one-time code, attempts, hashed
+  session secret, `verifiedAt`.
+- **comment** — author, body.
 
-### Operational (T2–T4)
-- **audit_log** — append-only, human-readable. Every score/assignment/export/
-  vote/publish/role change.
-- **webhook / webhook_delivery** — subscriptions and signed delivery attempts.
-- **certificate** — signed, publicly verifiable participation records.
+### Operations
+- **audit_log** — `actorId/Name/Role, action, target, detail (json), ipAddress,
+  createdAt`; indexed by event and time.
+- **webhook / webhook_delivery** — subscriptions (per-hook secret, event-type
+  filter) and every delivery attempt with status.
+- **certificate** — `serial`, subject, `kind (judge|winner)`, `statement`,
+  `reviewsCompleted`, `issuedAt`, `signature` (HMAC-SHA256).
 
-## Getting data IN
+## Why this shape
 
-1. **Fixtures at boot.** `seed.ts` loads `fixtures.json`, creating the event,
-   tracks, judges (as real users), teams, projects, scores, and derived pairwise
-   comparisons. Idempotent: it truncates first, so `docker compose up` is always
-   the same known state. It transforms the fixture shape into the schema — the
-   file is *input*, not the storage model.
-2. **Bulk import.** `POST /api/organizer/import` accepts an event bundle (the
-   shape `export.json` produces, or a hand-authored subset) and creates a **new**
-   event with fresh, remapped ids — an import never clobbers an existing event.
-3. **The API / UI.** Events, teams, projects, scores, votes are all created
-   through the documented REST endpoints (`/api/openapi.json`).
+- **Multi-event from the root.** Everything hangs off `event`, so one install
+  runs many hackathons; per-event permissions come from `event.createdBy` and
+  `event_judge`, not global flags.
+- **Derived, never duplicated.** Phase, weighted scores, normalized scores,
+  ranks, awards and tallies are computed on read from primary facts. There is
+  no cache to invalidate and no way for two screens to disagree.
+- **Uniqueness constraints carry the integrity rules** — one score per judge
+  per project, one vote row per voter per project, one assignment per pair.
+- **Rich text as JSON.** Stored as the editor's document and rendered through a
+  fixed schema: safe by construction, and the plain-text shadow column keeps
+  search and similarity cheap.
 
-## Getting data OUT
+## Migration paths
 
-1. **CSV** — `GET /api/organizer/export.csv`: one row per project with raw mean,
-   normalized mean, review count, rank. The acceptance suite's export check.
-2. **Full JSON** — `GET /api/organizer/export.json`: the entire event graph
-   (tracks, prizes, rubric, teams, members, projects, assignments, scores, votes,
-   comments) — round-trips into `import`.
-3. **Audit log** — `GET /api/organizer/audit`: the operational record.
-4. **Certificates** — `GET /api/certificates/{serial}`: signed records, publicly
-   verifiable.
+### Out
+- **Per-dataset exports** at every stage (`GET /api/events/:event/export?dataset=…&format=csv|json`):
+  participants, teams, projects, assignments, scores (one column per
+  criterion), results (raw, normalized, ranks, per-criterion means, votes,
+  pairwise, awards), votes (with IP), comments, audit. CSV is
+  spreadsheet-safe.
+- **Full bundle** (`GET /api/events/:event/bundle`) — one JSON file with the
+  event, tracks, rubric, prizes, judges, teams (members by email), projects
+  (with rich content), scores and pairwise verdicts.
 
-"A platform you cannot leave is a trap." Every table is reachable through an
-export, and the JSON export + import form a complete migration path.
+### In
+- `POST /api/events/import` (or the console's *Import & export* page) creates a
+  new draft event from a bundle. **The bundle format is a superset of the
+  DOGFOOD `fixtures.json` shape**, so a Juryza export, the fixtures file, and
+  any hand-written converter from another platform all import the same way.
+  Ids are kept when free and remapped on collision; people are matched by email
+  and missing accounts are created (password set via reset). The response
+  reports what was created and what was skipped.
+- The seed uses exactly this importer for the fixture event, so the migration
+  path is exercised on every boot.
 
-## Notable modelling decisions
+## Schema changes
 
-- **Ids keep fixture values.** Seeded rows reuse `fixtures.json` ids so the
-  acceptance suite and any manual inspection line up; only newly created rows get
-  fresh prefixed ids.
-- **No pre-aggregated scores.** Re-weighting the rubric or a late edit never
-  leaves stale numbers, because every aggregate is derived on read from `score`.
-- **`criteria` as JSON**, not a row-per-mark table: the mark set is small,
-  always read together, and mirrors the fixture shape exactly — a join per score
-  would buy nothing.
-- **Unique `(judge, project)` on score and assignment** makes double-scoring and
-  double-assignment impossible at the database level, not just in code.
+The container runs `drizzle-kit push` at start (idempotent, offline). For a
+long-lived production database, generate reviewed SQL migrations instead:
+`bun run --cwd apps/juryza db:generate`.
