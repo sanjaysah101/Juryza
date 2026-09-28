@@ -179,6 +179,11 @@ const PRESETS: { label: string; hint: string; build: () => Schedule }[] = [
     build: () => preset(5, 18, 48, 24),
   },
   {
+    label: "72-hour hackathon",
+    hint: "Starts next Friday 18:00 (3 days)",
+    build: () => preset(5, 18, 72, 24),
+  },
+  {
     label: "One-week sprint",
     hint: "Monday 09:00 → Monday 09:00",
     build: () => preset(1, 9, 7 * 24, 72),
@@ -751,7 +756,7 @@ function ScheduleStep({
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium">Start from a preset</p>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {PRESETS.map((p) => (
             <button
               key={p.label}

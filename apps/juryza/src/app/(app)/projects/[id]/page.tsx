@@ -245,11 +245,29 @@ function ProjectDocument({ data }: { data: ProjectData }) {
   const savedRef = useRef(saved);
   const inflight = useRef(false);
   const queued = useRef(false);
-  const taglineRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLTextAreaElement>(null);
+  const taglineRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     latest.current = fields;
   }, [fields]);
+
+  // Dynamically auto-resize textareas so neither displays a scrollbar and text is fully visible
+  useEffect(() => {
+    const el = titleRef.current;
+    if (el && fields.title !== undefined) {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  }, [fields.title]);
+
+  useEffect(() => {
+    const el = taglineRef.current;
+    if (el && fields.tagline !== undefined) {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  }, [fields.tagline]);
 
   const set = <K extends Key>(key: K, value: Fields[K]) =>
     setFields((f) => ({ ...f, [key]: value }));
@@ -531,6 +549,7 @@ function ProjectDocument({ data }: { data: ProjectData }) {
           {canEdit ? (
             <>
               <textarea
+                ref={titleRef}
                 value={fields.title}
                 onChange={(e) => set("title", e.target.value.replace(/\n/g, ""))}
                 onKeyDown={(e) => {
@@ -543,16 +562,22 @@ function ProjectDocument({ data }: { data: ProjectData }) {
                 maxLength={100}
                 placeholder="Untitled"
                 aria-label="Project title"
-                className="placeholder:text-muted-foreground/50 field-sizing-content w-full resize-none bg-transparent text-[2.5rem] leading-[1.15] font-semibold tracking-tight outline-none"
+                className="placeholder:text-muted-foreground/50 field-sizing-content w-full resize-none overflow-hidden bg-transparent text-[2.5rem] leading-[1.15] font-semibold tracking-tight outline-none"
               />
-              <input
+              <textarea
                 ref={taglineRef}
                 value={fields.tagline}
-                onChange={(e) => set("tagline", e.target.value)}
+                onChange={(e) => set("tagline", e.target.value.replace(/\n/g, " "))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                  }
+                }}
+                rows={1}
                 maxLength={160}
                 placeholder="Add a one-line tagline…"
                 aria-label="Tagline"
-                className="placeholder:text-muted-foreground/60 text-muted-foreground w-full bg-transparent text-lg outline-none"
+                className="placeholder:text-muted-foreground/60 text-muted-foreground w-full resize-none overflow-hidden bg-transparent text-lg leading-relaxed outline-none field-sizing-content"
               />
               {!fields.title.trim() && (
                 <p className="text-destructive text-xs">

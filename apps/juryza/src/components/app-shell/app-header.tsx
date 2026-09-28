@@ -16,6 +16,7 @@ import { Separator } from "@juryza/ui/components/ui/separator";
 import { SidebarTrigger } from "@juryza/ui/components/ui/sidebar";
 import { ThemeToggle } from "@juryza/ui/theme/theme-toggle";
 
+import { NotificationPanel } from "@/components/notifications/notification-panel";
 import type { Viewer } from "@/components/viewer";
 
 import { CommandMenu } from "./command-menu";
@@ -89,6 +90,7 @@ export function AppHeader({ viewer }: { viewer: Viewer }) {
         </BreadcrumbList>
       </Breadcrumb>
       <div className="flex items-center gap-2">
+        <NotificationPanel viewer={viewer} />
         <CommandMenu viewer={viewer} />
         <ThemeToggle />
       </div>
