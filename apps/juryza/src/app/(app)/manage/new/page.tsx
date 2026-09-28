@@ -21,6 +21,7 @@ import {
   MapPin,
   Plus,
   Rocket,
+  ShieldAlert,
   Sparkles,
   Tags,
   UsersRound,
@@ -41,6 +42,14 @@ import {
   CardTitle,
 } from "@juryza/ui/components/ui/card";
 import { Checkbox } from "@juryza/ui/components/ui/checkbox";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@juryza/ui/components/ui/empty";
 import {
   Field,
   FieldContent,
@@ -65,8 +74,10 @@ import { cn } from "@juryza/ui/lib/utils";
 
 import { coverStyle, EventCover } from "@/components/event-bits";
 import { PageHeader } from "@/components/page";
+import { useViewer } from "@/components/viewer";
 import { ApiError, api } from "@/lib/api";
 import { formatDateTime, pluralize } from "@/lib/format";
+import { hasAtLeast } from "@/lib/roles";
 
 type Mode = "online" | "in-person" | "hybrid";
 type Access = "authenticated" | "email" | "open";
@@ -249,6 +260,8 @@ const parseDomains = (s: string) =>
     .filter((x) => x.length >= 3);
 
 export default function NewEventPage() {
+  const viewer = useViewer();
+  const organizer = hasAtLeast(viewer?.role, "organizer");
   const router = useRouter();
   const queryClient = useQueryClient();
   const [step, setStep] = useState(0);
@@ -322,6 +335,28 @@ export default function NewEventPage() {
     }
     setStep(i);
   };
+
+  if (!organizer) {
+    return (
+      <Empty className="border">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <ShieldAlert />
+          </EmptyMedia>
+          <EmptyTitle>Organizer role required</EmptyTitle>
+          <EmptyDescription>
+            Creating and running events is available to organizers. Ask a platform admin to upgrade
+            your account, or explore events you can join in the meantime.
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button variant="outline" nativeButton={false} render={<Link href="/events" />}>
+            Explore events
+          </Button>
+        </EmptyContent>
+      </Empty>
+    );
+  }
 
   return (
     <>

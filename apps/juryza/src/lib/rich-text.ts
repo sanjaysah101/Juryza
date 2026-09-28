@@ -51,3 +51,24 @@ export function textToDoc(text: string | null | undefined): RichDoc {
 export function isEmptyDoc(doc: RichDoc | null | undefined): boolean {
   return docToText(doc).length === 0;
 }
+
+/** Parses a string (ProseMirror JSON or plain text) or returns a RichDoc as-is. */
+export function parseRichDoc(value: string | RichDoc | null | undefined): RichDoc {
+  if (!value) return textToDoc("");
+  if (typeof value === "object" && value.type === "doc") {
+    return value as RichDoc;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === "object" && parsed.type === "doc") {
+          return parsed as RichDoc;
+        }
+      } catch {}
+    }
+    return textToDoc(value);
+  }
+  return textToDoc("");
+}

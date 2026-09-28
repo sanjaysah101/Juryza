@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { RichDoc } from "@/lib/db/schema";
-import { docToText, isEmptyDoc, textToDoc } from "@/lib/rich-text";
+import { docToText, isEmptyDoc, parseRichDoc, textToDoc } from "@/lib/rich-text";
 
 const doc = {
   type: "doc",
@@ -75,5 +75,25 @@ describe("isEmptyDoc", () => {
       } as RichDoc)
     ).toBe(true);
     expect(isEmptyDoc(doc)).toBe(false);
+  });
+});
+
+describe("parseRichDoc", () => {
+  test("parses serialized JSON RichDoc", () => {
+    const serialized = JSON.stringify(doc);
+    expect(parseRichDoc(serialized)).toEqual(doc);
+  });
+
+  test("converts plain text to RichDoc", () => {
+    expect(parseRichDoc("Hello world")).toEqual(textToDoc("Hello world"));
+  });
+
+  test("handles empty or nullish values", () => {
+    expect(parseRichDoc(null)).toEqual(textToDoc(""));
+    expect(parseRichDoc("")).toEqual(textToDoc(""));
+  });
+
+  test("passes RichDoc through unchanged", () => {
+    expect(parseRichDoc(doc)).toEqual(doc);
   });
 });

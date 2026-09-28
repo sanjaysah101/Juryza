@@ -8,6 +8,7 @@ import { CalendarDays, Search } from "lucide-react";
 
 import { Button } from "@juryza/ui/components/ui/button";
 import {
+  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -84,50 +85,52 @@ export function CommandMenu({ viewer }: { viewer: Viewer }) {
         title="Command menu"
         description="Jump to a page or event"
       >
-        <CommandInput placeholder="Type a page or event name…" />
-        <CommandList>
-          <CommandEmpty>Nothing matches.</CommandEmpty>
-          {mainNav(viewer).map((g) => (
-            <CommandGroup key={g.label} heading={g.label}>
-              {g.items.map((i) => (
-                <CommandItem
-                  key={i.href}
-                  value={`${g.label} ${i.label}`}
-                  onSelect={() => go(i.href)}
-                >
+        <Command>
+          <CommandInput placeholder="Type a page or event name…" />
+          <CommandList>
+            <CommandEmpty>Nothing matches.</CommandEmpty>
+            {mainNav(viewer).map((g) => (
+              <CommandGroup key={g.label} heading={g.label}>
+                {g.items.map((i) => (
+                  <CommandItem
+                    key={i.href}
+                    value={`${g.label} ${i.label}`}
+                    onSelect={() => go(i.href)}
+                  >
+                    <i.icon /> {i.label}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ))}
+            <CommandSeparator />
+            {data?.events.length ? (
+              <CommandGroup heading="Events">
+                {data.events.map((e) => (
+                  <CommandItem
+                    key={e.id}
+                    value={`event ${e.name} ${e.slug}`}
+                    onSelect={() =>
+                      go(
+                        e.createdBy === viewer.userId || viewer.role === "admin"
+                          ? `/manage/${e.slug}`
+                          : `/e/${e.slug}`
+                      )
+                    }
+                  >
+                    <CalendarDays /> {e.name}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ) : null}
+            <CommandGroup heading="More">
+              {extraCommands.map((i) => (
+                <CommandItem key={i.href} value={i.label} onSelect={() => go(i.href)}>
                   <i.icon /> {i.label}
                 </CommandItem>
               ))}
             </CommandGroup>
-          ))}
-          <CommandSeparator />
-          {data?.events.length ? (
-            <CommandGroup heading="Events">
-              {data.events.map((e) => (
-                <CommandItem
-                  key={e.id}
-                  value={`event ${e.name} ${e.slug}`}
-                  onSelect={() =>
-                    go(
-                      e.createdBy === viewer.userId || viewer.role === "admin"
-                        ? `/manage/${e.slug}`
-                        : `/e/${e.slug}`
-                    )
-                  }
-                >
-                  <CalendarDays /> {e.name}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          ) : null}
-          <CommandGroup heading="More">
-            {extraCommands.map((i) => (
-              <CommandItem key={i.href} value={i.label} onSelect={() => go(i.href)}>
-                <i.icon /> {i.label}
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        </CommandList>
+          </CommandList>
+        </Command>
       </CommandDialog>
     </>
   );

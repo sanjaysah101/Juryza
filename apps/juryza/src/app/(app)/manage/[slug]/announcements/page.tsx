@@ -51,12 +51,15 @@ import { Input } from "@juryza/ui/components/ui/input";
 import { Skeleton } from "@juryza/ui/components/ui/skeleton";
 import { Spinner } from "@juryza/ui/components/ui/spinner";
 import { Switch } from "@juryza/ui/components/ui/switch";
-import { Textarea } from "@juryza/ui/components/ui/textarea";
 
+import { RichContent } from "@/components/editor/rich-content";
+import { RichEditor } from "@/components/editor/rich-editor";
 import { Section } from "@/components/page";
 import { api } from "@/lib/api";
+import type { RichDoc } from "@/lib/db/schema";
 import { formatDateTime, relativeTime } from "@/lib/format";
 import { eventKey } from "@/lib/queries";
+import { isEmptyDoc, parseRichDoc, textToDoc } from "@/lib/rich-text";
 import type { Announcement, Json } from "@/lib/types";
 
 export default function AnnouncementsPage() {
@@ -69,7 +72,8 @@ export default function AnnouncementsPage() {
       api.get<{ announcements: Json<Announcement>[] }>(`/api/events/${slug}/announcements`),
   });
   const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  const [body, setBody] = useState<RichDoc>(() => textToDoc(""));
+  const [editorKey, setEditorKey] = useState(0);
   const [pinned, setPinned] = useState(false);
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: eventKey(slug) });
@@ -78,13 +82,14 @@ export default function AnnouncementsPage() {
     mutationFn: () =>
       api.post(`/api/events/${slug}/announcements`, {
         title: title.trim(),
-        body: body.trim(),
+        body,
         pinned,
       }),
     onSuccess: async () => {
       toast.success("Announcement posted");
       setTitle("");
-      setBody("");
+      setBody(textToDoc(""));
+      setEditorKey((k) => k + 1);
       setPinned(false);
       await refresh();
     },
@@ -100,7 +105,7 @@ export default function AnnouncementsPage() {
     onError: (e) => toast.error(e.message),
   });
 
-  const valid = title.trim().length >= 2 && body.trim().length >= 1;
+  const valid = title.trim().length >= 2 && !isEmptyDoc(body);
   const list = data?.announcements ?? [];
 
   return (
@@ -132,17 +137,19 @@ export default function AnnouncementsPage() {
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="body">Message</FieldLabel>
-                <Textarea
-                  id="body"
-                  value={body}
-                  maxLength={4000}
-                  rows={6}
-                  placeholder="What participants need to know…"
-                  onChange={(e) => setBody(e.target.value)}
-                />
-                <FieldDescription className="text-right tabular-nums">
-                  {body.length}/4000
+                <FieldLabel>Message</FieldLabel>
+                <div className="rounded-lg border px-4 py-3">
+                  <RichEditor
+                    key={editorKey}
+                    value={body}
+                    onChange={setBody}
+                    className="min-h-36"
+                    placeholder="What participants need to know… Press / for blocks"
+                  />
+                </div>
+                <FieldDescription>
+                  Supports Notion-style blocks (press /), headings, lists, quotes, and markdown
+                  shortcuts.
                 </FieldDescription>
               </Field>
               <FieldLabel htmlFor="pinned">
@@ -196,7 +203,7 @@ export default function AnnouncementsPage() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="px-4">
-                    <p className="text-sm whitespace-pre-wrap">{a.body}</p>
+                    <RichContent doc={parseRichDoc(a.body)} className="text-sm" />
                   </CardContent>
                   <CardFooter className="justify-end px-4">
                     <AlertDialog>

@@ -51,7 +51,7 @@ import { api } from "@/lib/api";
 import { formatDate, pluralize, relativeTime } from "@/lib/format";
 import { hasVoting, phaseOf, submissionsAreOpen } from "@/lib/phase";
 import { type EventDetail, eventKey, useEvent } from "@/lib/queries";
-import { isEmptyDoc } from "@/lib/rich-text";
+import { isEmptyDoc, parseRichDoc } from "@/lib/rich-text";
 
 import { CreateTeamDialog } from "./create-team-dialog";
 
@@ -178,7 +178,7 @@ function Announcements({ items }: { items: EventDetail["announcements"] }) {
               <p className="font-medium">{a.title}</p>
               <span className="text-muted-foreground text-xs">{relativeTime(a.createdAt)}</span>
             </div>
-            <p className="text-muted-foreground text-sm whitespace-pre-line">{a.body}</p>
+            <RichContent doc={parseRichDoc(a.body)} className="text-muted-foreground text-sm" />
           </div>
         ))}
       </div>

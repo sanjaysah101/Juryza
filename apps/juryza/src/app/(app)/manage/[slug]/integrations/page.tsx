@@ -1,15 +1,17 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Check,
   ChevronRight,
   Code2,
   FileCode2,
   KeyRound,
+  Pencil,
   Plus,
   Send,
   ShieldCheck,
@@ -119,6 +121,7 @@ export default function IntegrationsPage() {
   });
   const refresh = () => qc.invalidateQueries({ queryKey: key });
   const [createOpen, setCreateOpen] = useState(false);
+  const [editing, setEditing] = useState<Hook | null>(null);
   const [deleting, setDeleting] = useState<Hook | null>(null);
 
   const toggle = useMutation({
@@ -232,6 +235,14 @@ export default function IntegrationsPage() {
                     <Button
                       variant="ghost"
                       size="icon-sm"
+                      aria-label={`Edit webhook ${h.url}`}
+                      onClick={() => setEditing(h)}
+                    >
+                      <Pencil />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
                       aria-label={`Delete webhook ${h.url}`}
                       onClick={() => setDeleting(h)}
                     >
@@ -335,6 +346,16 @@ export default function IntegrationsPage() {
         />
       )}
 
+      {data && (
+        <EditDialog
+          hook={editing}
+          types={data.types}
+          open={editing !== null}
+          onOpenChange={(o) => !o && setEditing(null)}
+          onSaved={refresh}
+        />
+      )}
+
       <AlertDialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -421,7 +442,22 @@ function Deliveries({ items }: { items: Delivery[] }) {
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className="flex flex-col gap-2 px-3 pb-3">
-                    {d.error && <p className="text-destructive text-xs">{d.error}</p>}
+                    {d.error && (
+                      <div className="flex flex-col gap-1">
+                        <p className="text-destructive text-xs font-medium">{d.error}</p>
+                        {d.error.toLowerCase().includes("unable to connect") && (
+                          <p className="text-muted-foreground text-xs">
+                            The destination server could not be reached (connection refused or port
+                            closed). Verify your webhook receiver is running. For local testing
+                            without external servers, point the webhook URL to{" "}
+                            <code className="text-foreground font-mono">
+                              /api/webhooks/test-sink
+                            </code>
+                            .
+                          </p>
+                        )}
+                      </div>
+                    )}
                     <pre className="bg-muted max-h-64 overflow-auto rounded-md p-3 font-mono text-xs">
                       {JSON.stringify(d.payload, null, 2)}
                     </pre>
@@ -560,6 +596,22 @@ function CreateDialog({
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
               />
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Where signed JSON requests will be POSTed.</span>
+                <button
+                  type="button"
+                  className="text-primary underline-offset-4 hover:underline"
+                  onClick={() =>
+                    setUrl(
+                      origin
+                        ? `${origin}/api/webhooks/test-sink`
+                        : "http://localhost:3000/api/webhooks/test-sink"
+                    )
+                  }
+                >
+                  Use local test sink
+                </button>
+              </div>
             </div>
             <fieldset className="flex flex-col gap-2">
               <legend className="mb-2 flex w-full items-center justify-between text-sm font-medium">
@@ -595,6 +647,127 @@ function CreateDialog({
               {create.isPending ? <Spinner /> : <Plus />} Create webhook
             </Button>
           )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditDialog({
+  hook,
+  types,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  hook: Hook | null;
+  types: string[];
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onSaved: () => void;
+}) {
+  const origin = useOrigin();
+  const [url, setUrl] = useState(hook?.url ?? "");
+  const [events, setEvents] = useState<string[]>(hook?.events ?? []);
+
+  useEffect(() => {
+    if (hook) {
+      setUrl(hook.url);
+      setEvents(hook.events);
+    }
+  }, [hook]);
+
+  const update = useMutation({
+    mutationFn: () =>
+      api.patch(`/api/webhooks/${hook?.id}`, {
+        url: url.trim(),
+        events,
+      }),
+    onSuccess: () => {
+      toast.success("Webhook updated");
+      onOpenChange(false);
+      onSaved();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  if (!hook) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Edit webhook</DialogTitle>
+          <DialogDescription>
+            Update the destination URL or event subscriptions for this webhook.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          id="webhook-edit-form"
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            update.mutate();
+          }}
+        >
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="edit-hook-url">Payload URL</Label>
+            <Input
+              id="edit-hook-url"
+              type="url"
+              required
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Where signed JSON requests will be POSTed.</span>
+              <button
+                type="button"
+                className="text-primary underline-offset-4 hover:underline"
+                onClick={() =>
+                  setUrl(
+                    origin
+                      ? `${origin}/api/webhooks/test-sink`
+                      : "http://localhost:3000/api/webhooks/test-sink"
+                  )
+                }
+              >
+                Use local test sink
+              </button>
+            </div>
+          </div>
+          <fieldset className="flex flex-col gap-2">
+            <legend className="mb-2 flex w-full items-center justify-between text-sm font-medium">
+              Events
+              <span className="text-muted-foreground text-xs font-normal">
+                {events.length === 0 ? "None selected = all events" : `${events.length} selected`}
+              </span>
+            </legend>
+            <div className="grid max-h-64 gap-1.5 overflow-y-auto sm:grid-cols-2">
+              {types.map((t) => (
+                <Label
+                  key={t}
+                  className="hover:bg-muted/50 flex items-center gap-2 rounded-md border px-2.5 py-1.5 font-normal"
+                >
+                  <Checkbox
+                    checked={events.includes(t)}
+                    onCheckedChange={(on) =>
+                      setEvents(on ? [...events, t] : events.filter((x) => x !== t))
+                    }
+                  />
+                  <span className="font-mono text-xs">{t}</span>
+                </Label>
+              ))}
+            </div>
+          </fieldset>
+        </form>
+        <DialogFooter className="gap-2">
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" form="webhook-edit-form" disabled={!url || update.isPending}>
+            {update.isPending ? <Spinner /> : <Check />} Save changes
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
