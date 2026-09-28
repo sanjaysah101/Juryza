@@ -7,9 +7,11 @@ import {
   ArrowRight,
   Award,
   CalendarPlus,
+  CheckCircle2,
   Compass,
   FolderKanban,
   Gavel,
+  Lock,
   PencilLine,
   UsersRound,
 } from "lucide-react";
@@ -52,7 +54,14 @@ export default function DashboardPage() {
     queryFn: () => api.get<Overview>("/api/me/overview"),
   });
   const organizer = hasAtLeast(viewer?.role, "organizer");
-  const toReview = data?.judging.reduce((n, j) => n + Math.max(0, j.assigned - j.scored), 0) ?? 0;
+  const now = Date.now();
+  const toReview =
+    data?.judging.reduce((n, j) => {
+      const closes = j.judgingClose ? new Date(j.judgingClose).getTime() : null;
+      const locked = Boolean(j.resultsPublished) || (closes !== null && closes <= now);
+      if (locked) return n;
+      return n + Math.max(0, j.assigned - j.scored);
+    }, 0) ?? 0;
   const firstName = viewer?.name.split(" ")[0] ?? "there";
 
   return (
@@ -115,11 +124,28 @@ export default function DashboardPage() {
               <Section title="Judging" description="Projects assigned to you for review.">
                 <div className="grid gap-3 md:grid-cols-2">
                   {data.judging.map((j) => {
-                    const pct = j.assigned ? Math.round((j.scored / j.assigned) * 100) : 0;
+                    const done = Math.min(j.scored, j.assigned);
+                    const pct = j.assigned ? Math.round((done / j.assigned) * 100) : 0;
+                    const closes = j.judgingClose ? new Date(j.judgingClose).getTime() : null;
+                    const locked =
+                      Boolean(j.resultsPublished) || (closes !== null && closes <= now);
+                    const complete = j.assigned > 0 && done >= j.assigned;
                     return (
                       <Card key={j.id} className="gap-3">
                         <CardHeader>
-                          <CardTitle className="text-base">{j.name}</CardTitle>
+                          <div className="flex items-start justify-between gap-2">
+                            <CardTitle className="text-base">{j.name}</CardTitle>
+                            {locked ? (
+                              <Badge variant="secondary" className="gap-1 shrink-0">
+                                <Lock className="size-3" />
+                                {j.resultsPublished ? "Results published" : "Judging closed"}
+                              </Badge>
+                            ) : complete ? (
+                              <Badge className="gap-1 shrink-0">
+                                <CheckCircle2 className="size-3" /> All reviewed
+                              </Badge>
+                            ) : null}
+                          </div>
                           <CardDescription>
                             {j.scored} of {j.assigned} reviewed
                           </CardDescription>
@@ -132,7 +158,13 @@ export default function DashboardPage() {
                             nativeButton={false}
                             render={<Link href={`/judging/${j.slug}`} />}
                           >
-                            {j.scored < j.assigned ? "Continue reviewing" : "Review scores"}{" "}
+                            {j.assigned === 0
+                              ? "Open console"
+                              : complete || locked
+                                ? "Review scores"
+                                : j.scored === 0
+                                  ? "Start reviewing"
+                                  : "Continue reviewing"}{" "}
                             <ArrowRight />
                           </Button>
                         </CardContent>

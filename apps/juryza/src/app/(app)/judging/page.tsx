@@ -153,10 +153,10 @@ export default function JudgingPage() {
                     >
                       {e.assigned === 0
                         ? "Open console"
-                        : done === 0
-                          ? "Start reviewing"
-                          : complete || locked
-                            ? "Review scores"
+                        : complete || locked
+                          ? "Review scores"
+                          : done === 0
+                            ? "Start reviewing"
                             : "Continue reviewing"}
                       <ArrowRight />
                     </Button>
