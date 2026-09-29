@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { BookOpen, Compass, FileJson, Milestone, ShieldCheck, Sparkles } from "lucide-react";
+import { BookOpen, Compass, FileJson, Milestone, ShieldCheck, Sparkles, Users } from "lucide-react";
 
 /**
  * The documentation table of contents. One source of truth for the docs
@@ -23,6 +23,13 @@ export const DOC_LINKS: DocLink[] = [
     description: "What Juryza is, how it fits together, and where to go next.",
     icon: Compass,
     eyebrow: "Start here",
+  },
+  {
+    href: "/docs/roles",
+    label: "Roles & permissions",
+    description: "What participants, judges, organizers, and admins can and should do.",
+    icon: Users,
+    eyebrow: "Access & governance",
   },
   {
     href: "/docs/guide",
