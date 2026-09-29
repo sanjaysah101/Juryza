@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "bun run --bun next dev --port 3000",
-    "build": "bun run --bun next build",
+    "build": "bun run --bun next build --webpack",
     "start": "bun run --bun next start --port 8080",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "bun test src/lib/__tests__",

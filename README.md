@@ -170,7 +170,7 @@ API-first with a published OpenAPI spec.
 
 ```sh
 bun install
-docker run -d --name juryza-pg -p 5432:5432 -e POSTGRES_USER=juryza -e POSTGRES_PASSWORD=juryza -e POSTGRES_DB=juryza postgres:18-alpine
+docker compose up -d db
 cd apps/juryza
 bun run db:push && bun run seed
 bun run dev          # http://localhost:3000

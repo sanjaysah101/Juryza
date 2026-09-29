@@ -17,10 +17,9 @@ services:
       POSTGRES_USER: juryza
       POSTGRES_PASSWORD: juryza
       POSTGRES_DB: juryza
-    # No published port by default — the portal reaches it over the compose
-    # network. Uncomment to inspect with a local client.
-    # ports:
-    #   - "5432:5432"
+    # Keep local development access on this machine only.
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       # PostgreSQL 18 places data in a subdirectory of /var/lib/postgresql, so
       # the mount sits one level up (see docker-library/postgres#37).
