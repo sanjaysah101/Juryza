@@ -12,13 +12,15 @@
     "lint:fix": "biome check . --write",
     "lint:unsafe": "biome check . --write --unsafe",
     "format": "biome format --write .",
-    "db:push": "drizzle-kit push --force",
-    "db:generate": "drizzle-kit generate",
-    "db:studio": "drizzle-kit studio",
+    "db:push": "drizzle-kit push --config ../../packages/database/drizzle.config.ts",
+    "db:generate": "drizzle-kit generate --config ../../packages/database/drizzle.config.ts",
+    "db:studio": "drizzle-kit studio --config ../../packages/database/drizzle.config.ts",
+    "db:migrate": "bun run ../../packages/database/src/migrate.ts",
     "seed": "bun run src/lib/db/seed.ts",
-    "boot": "bun run db:push && bun run seed && bun run start"
+    "boot": "bun run db:migrate && bun run seed && bun run start"
   },
   "dependencies": {
+    "@juryza/database": "workspace:*",
     "@juryza/ui": "workspace:*",
     "@tanstack/react-query": "^5.104.0",
     "@tiptap/core": "^3.31.3",

@@ -1,0 +1,17 @@
+{
+  "name": "@juryza/database",
+  "version": "0.1.0",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "dependencies": {
+    "drizzle-kit": "^0.31.11",
+    "drizzle-orm": "^0.45.3",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}
