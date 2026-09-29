@@ -15,6 +15,14 @@ export const metadata: Metadata = {
   title: { default: "Juryza — hackathons, judged fairly", template: "%s · Juryza" },
   description:
     "Self-hosted hackathon platform: events, teams, submissions, fair judging with normalization and pairwise ranking, community voting, and results you can defend.",
+  icons: {
+    icon: [
+      { url: "/favicon.png", type: "image/png" },
+      { url: "/icon.png", type: "image/png" },
+    ],
+    shortcut: "/favicon.png",
+    apple: "/favicon.png",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -9,6 +9,17 @@ one machine. Every rule is enforced by the API, and every number is explained.
 
 Built for [DOGFOOD 2026](https://dogfoodhack.com). MIT licensed.
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Tests: 75 unit + 13 live](https://img.shields.io/badge/Tests-88%20passing-success)](./acceptance-report.txt)
+[![Offline Capable](https://img.shields.io/badge/Network-100%25%20Offline-success)](#run-it)
+
+---
+
+## 🎬 Walkthrough & Demo
+
+![Juryza Complete Roles & Judging Walkthrough](./juryza_complete_roles_demo.webp)
+*A complete walkthrough demonstrating all roles: Organizer panel & rubric calibration, Judge blind isolated scoring, Pairwise Duel Arena with Bradley–Terry ranking, and Participant Notion-style editor.*
+
 ---
 
 ## Run it
@@ -180,6 +191,60 @@ is covered by our own integration tests (below) and is demonstrable in the UI.
 Normalization proof ([JUDGING.md §4](./JUDGING.md)) · pairwise mode with
 Bradley–Terry ([§5](./JUDGING.md)) · threat model ([THREAT-MODEL.md](./THREAT-MODEL.md)) ·
 API-first with a published OpenAPI spec.
+
+## System Architecture & Data Flow
+
+```mermaid
+flowchart TD
+    Client["Browser Client (Command Bar, TipTap Editor, Duel Arena)"] --> Next["Next.js 16 (App Router + React 19)"]
+    Next --> Auth["Better Auth (Role Isolation & Auth Headers)"]
+    Next --> API["REST API & OpenAPI 3.1 Specs"]
+    Next --> Engine["Fair Scoring & Judging Engines"]
+
+    subgraph CoreEngines ["Core Algorithmic Engines"]
+        Engine --> ZScore["z-Score Normalizer (Calibration & Outlier Filter)"]
+        Engine --> BT["Bradley-Terry Elo Solver (Pairwise MLE Ranking)"]
+        Engine --> QV["Quadratic Voting (Credit Budgets & Anti-Sybil)"]
+        Engine --> Cert["Verifiable Certificates (Ed25519-Signed)"]
+    end
+
+    Next --> Drizzle["Drizzle ORM"]
+    Drizzle --> DB[("PostgreSQL 18 Database")]
+```
+
+### Judging & Normalization Pipeline
+
+```mermaid
+flowchart LR
+    A["Raw Judge Scores (Rubrics 0-5)"] --> B["Judge Calibration & Variance Analysis"]
+    B --> C{"Sufficient Reviews per Judge?"}
+    C -->|Yes: 3 or more reviews| D["z-Score Normalization (Standardized 0-100)"]
+    C -->|No: Low volume or flat judge| E["Bradley-Terry Pairwise Duel Arena"]
+    D --> F["Defensible Leaderboard & Audit Trail"]
+    E --> F
+```
+
+### Event Lifecycle & Permissions
+
+```mermaid
+flowchart LR
+    S1["1. Draft Event"] --> S2["2. Registration & Teams"]
+    S2 --> S3["3. Submissions Open"]
+    S3 --> S4["4. Hard Deadline Lock"]
+    S4 --> S5["5. Blind Judging & Pairwise Duels"]
+    S5 --> S6["6. Community Voting Closes"]
+    S6 --> S7["7. Results Published & Certificates"]
+```
+
+---
+
+## 📝 Write-up Challenge & Technical Deep-Dive
+
+An in-depth architectural breakdown written for the hackathon write-up challenge:
+- **Article**: *Building Juryza: Hackathon Judging You Can Defend*
+- **Deep-Dive Topics**: The math of z-score normalization vs Bradley–Terry pairwise ranking, building an offline-first single-container evaluation engine, and enforcing hard cryptographic/API invariants without cloud lock-in.
+
+---
 
 ## Documentation
 
