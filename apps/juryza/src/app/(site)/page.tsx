@@ -1,3 +1,4 @@
+import type React from "react";
 import Link from "next/link";
 
 import {
@@ -7,7 +8,6 @@ import {
   Check,
   ChevronsUpDown,
   Code2,
-  Copy,
   FileDown,
   FileText,
   Gavel,
@@ -20,7 +20,6 @@ import {
   Scale,
   ScanSearch,
   ScrollText,
-  Server,
   ShieldCheck,
   Sigma,
   Swords,
@@ -40,6 +39,8 @@ import { Button } from "@juryza/ui/components/ui/button";
 import { Card, CardContent } from "@juryza/ui/components/ui/card";
 import { cn } from "@juryza/ui/lib/utils";
 
+import { AnimatedCounter } from "@/components/animated-counter";
+import { CtaTerminal } from "@/components/cta-terminal";
 import { EventCover, NextMilestone, PhaseBadge } from "@/components/event-bits";
 import { formatNumber, formatRange } from "@/lib/format";
 import { featuredEvents, platformStats } from "@/lib/server/public";
@@ -103,13 +104,22 @@ function SectionHeading({
   );
 }
 
-function Pill({ children, className }: { children: React.ReactNode; className?: string }) {
+function Pill({
+  children,
+  className,
+  style,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
   return (
     <span
       className={cn(
         "bg-background/70 text-muted-foreground inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium shadow-xs backdrop-blur",
         className
       )}
+      style={style}
     >
       {children}
     </span>
@@ -142,23 +152,36 @@ function Hero() {
       />
       <Container className="grid items-center gap-14 pt-16 pb-20 sm:pt-24 lg:grid-cols-[1.05fr_1fr] lg:gap-10 lg:pb-28">
         <div className="flex flex-col items-start gap-6">
-          <Pill>
+          {/* Staggered entrance: pill → h1 → p → buttons → trust */}
+          <Pill
+            className="animate-fade-up"
+            style={{ animationDelay: "0ms" } as React.CSSProperties}
+          >
             <span className="bg-success size-1.5 rounded-full" />
             Open source · Self-hosted · Works fully offline
           </Pill>
-          <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl lg:text-6xl">
+          <h1
+            className="animate-fade-up text-4xl font-semibold tracking-tight text-balance sm:text-5xl lg:text-6xl"
+            style={{ animationDelay: "80ms" } as React.CSSProperties}
+          >
             Hackathon judging{" "}
             <span className="from-primary to-chart-2 bg-linear-to-r bg-clip-text text-transparent">
               you can defend.
             </span>
           </h1>
-          <p className="text-muted-foreground max-w-xl text-lg text-pretty">
+          <p
+            className="animate-fade-up text-muted-foreground max-w-xl text-lg text-pretty"
+            style={{ animationDelay: "160ms" } as React.CSSProperties}
+          >
             Juryza runs your whole hackathon — registration, teams, submissions, judging, community
             voting and published results — and makes the ranking{" "}
             <span className="text-foreground font-medium">statistically fair</span>. A harsh judge
             can't sink a project, and every score is on the record.
           </p>
-          <div className="flex flex-wrap items-center gap-3">
+          <div
+            className="animate-fade-up flex flex-wrap items-center gap-3"
+            style={{ animationDelay: "240ms" } as React.CSSProperties}
+          >
             <Button
               size="lg"
               className="h-10 px-4"
@@ -177,7 +200,10 @@ function Hero() {
               Browse events
             </Button>
           </div>
-          <div className="text-muted-foreground flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+          <div
+            className="animate-fade-up text-muted-foreground flex flex-wrap items-center gap-x-5 gap-y-2 text-sm"
+            style={{ animationDelay: "320ms" } as React.CSSProperties}
+          >
             <span className="flex items-center gap-1.5">
               <Check className="text-success size-4" /> No cloud account
             </span>
@@ -189,7 +215,10 @@ function Hero() {
             </span>
           </div>
         </div>
-        <HeroVisual />
+        {/* Float in after text, then perpetually bob */}
+        <div className="animate-float" style={{ animationDelay: "200ms" } as React.CSSProperties}>
+          <HeroVisual />
+        </div>
       </Container>
     </section>
   );
@@ -361,7 +390,7 @@ function StatsStrip({ stats }: { stats: Awaited<ReturnType<typeof platformStats>
             <div key={s.label} className="flex flex-col items-center gap-1 text-center">
               <dt className="text-muted-foreground order-2 text-sm">{s.label}</dt>
               <dd className="order-1 text-3xl font-semibold tracking-tight tabular-nums">
-                {formatNumber(s.value)}
+                <AnimatedCounter value={s.value} />
               </dd>
             </div>
           ))}
@@ -879,6 +908,7 @@ function FinalCta() {
     <section className="pb-20 sm:pb-28">
       <Container>
         <div className="bg-primary text-primary-foreground relative isolate overflow-hidden rounded-3xl px-6 py-14 shadow-xl sm:px-12 sm:py-16">
+          {/* Subtle animated grid pattern */}
           <div
             aria-hidden
             className="absolute inset-0 -z-10 opacity-20"
@@ -888,6 +918,12 @@ function FinalCta() {
               backgroundSize: "32px 32px",
               maskImage: "radial-gradient(ellipse at right, black, transparent 70%)",
             }}
+          />
+          {/* Glowing orb */}
+          <div
+            aria-hidden
+            className="absolute -bottom-32 -right-32 -z-10 size-96 rounded-full opacity-20 blur-3xl"
+            style={{ background: "radial-gradient(closest-side, white, transparent)" }}
           />
           <div className="grid items-center gap-10 lg:grid-cols-[1.3fr_1fr]">
             <div className="flex flex-col gap-4">
@@ -913,28 +949,28 @@ function FinalCta() {
                   variant="ghost"
                   className="hover:bg-primary-foreground/10 hover:text-primary-foreground h-10 px-4"
                   nativeButton={false}
-                  render={<Link href="/events" />}
+                  render={
+                    <a
+                      href="https://github.com/sanjaysah101/juryza"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    />
+                  }
                 >
-                  Browse events
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    className="size-4 shrink-0"
+                    aria-hidden
+                  >
+                    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
+                  </svg>
+                  Star on GitHub
                 </Button>
               </div>
             </div>
-            <div className="bg-foreground/90 text-background rounded-xl p-5 font-mono text-sm shadow-2xl ring-1 ring-black/10">
-              <div className="mb-3 flex items-center justify-between opacity-60">
-                <span className="flex items-center gap-2 text-xs">
-                  <Server className="size-3.5" /> terminal
-                </span>
-                <Copy className="size-3.5" aria-hidden />
-              </div>
-              <p>
-                <span className="opacity-50">$</span> git clone …/juryza && cd juryza
-              </p>
-              <p>
-                <span className="opacity-50">$</span> docker compose up
-              </p>
-              <p className="mt-2 opacity-60">✓ postgres ready · schema pushed · fixtures seeded</p>
-              <p className="opacity-60">✓ portal on http://localhost:8080</p>
-            </div>
+            {/* Interactive terminal widget */}
+            <CtaTerminal />
           </div>
         </div>
       </Container>
