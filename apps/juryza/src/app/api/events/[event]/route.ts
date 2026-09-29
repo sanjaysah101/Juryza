@@ -108,7 +108,15 @@ export const PATCH = handle<P>(async (req, { event: ref }) => {
     if (taken) throw conflict("That URL is already taken — choose another slug");
   }
 
-  const { submissionsOpen, submissionsClose, judgingClose, votingOpen, votingClose, ...rest } = b;
+  const {
+    submissionsOpen,
+    submissionsClose,
+    judgingClose,
+    votingOpen,
+    votingClose,
+    votingElectorateLockAt,
+    ...rest
+  } = b;
   await db
     .update(event)
     .set({
@@ -119,6 +127,9 @@ export const PATCH = handle<P>(async (req, { event: ref }) => {
       ...(judgingClose !== undefined && { judgingClose: toDate(judgingClose) }),
       ...(votingOpen !== undefined && { votingOpen: toDate(votingOpen) }),
       ...(votingClose !== undefined && { votingClose: toDate(votingClose) }),
+      ...(votingElectorateLockAt !== undefined && {
+        votingElectorateLockAt: toDate(votingElectorateLockAt),
+      }),
       updatedAt: new Date(),
     })
     .where(eq(event.id, e.id));

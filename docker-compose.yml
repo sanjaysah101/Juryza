@@ -8,6 +8,7 @@
 # offline — no cloud account, no hosted database, no external API.
 #
 # Reseed from scratch:   SEED_RESET=1 docker compose up
+# Add real-world demo:   SEED_SHOWCASE=1 SEED_RESET=1 docker compose up
 # Wipe everything:       docker compose down -v
 
 services:
@@ -48,6 +49,9 @@ services:
       NODE_ENV: production
       # Set to 1 to wipe and reseed the database on start.
       SEED_RESET: ${SEED_RESET:-0}
+      # Set to 1 to also seed the Hackathon Raptors real-world showcase events
+      # (off by default; the acceptance database stays fixture + sandbox only).
+      SEED_SHOWCASE: ${SEED_SHOWCASE:-0}
     ports:
       - "8080:8080"
     volumes:

@@ -70,6 +70,7 @@ import type { Event, Json, RichDoc } from "@/lib/types";
 
 type Mode = "online" | "in-person" | "hybrid";
 type Access = "authenticated" | "email" | "open";
+type VotingMode = "quadratic" | "writeup";
 
 interface Form {
   name: string;
@@ -90,6 +91,9 @@ interface Form {
   votingAccess: Access;
   votingEmailDomains: string;
   voteBudget: number;
+  votingMode: VotingMode;
+  votingShortlistSize: number;
+  votingElectorateLockAt: string;
   visibility: "draft" | "published";
 }
 type Key = keyof Form;
@@ -100,6 +104,7 @@ const DATE_KEYS = [
   "judgingClose",
   "votingOpen",
   "votingClose",
+  "votingElectorateLockAt",
 ] as const;
 
 const toLocalInput = (v: string | null) => {
@@ -129,6 +134,9 @@ function toForm(e: Json<Event>): Form {
     votingAccess: e.votingAccess as Access,
     votingEmailDomains: e.votingEmailDomains.join(", "),
     voteBudget: e.voteBudget,
+    votingMode: (e.votingMode as VotingMode) ?? "quadratic",
+    votingShortlistSize: e.votingShortlistSize ?? 0,
+    votingElectorateLockAt: toLocalInput(e.votingElectorateLockAt),
     visibility: e.visibility as Form["visibility"],
   };
 }
@@ -426,8 +434,15 @@ function SettingsForm({ event }: { event: Json<Event> }) {
       </SectionCard>
 
       <SectionCard
-        {...section("Community voting", ["votingAccess", "votingEmailDomains", "voteBudget"])}
-        description="Who may vote and how many quadratic-vote credits each voter gets."
+        {...section("Community voting", [
+          "votingAccess",
+          "votingEmailDomains",
+          "voteBudget",
+          "votingMode",
+          "votingShortlistSize",
+          "votingElectorateLockAt",
+        ])}
+        description="Who may vote, how many quadratic-vote credits each voter gets, and the anti-abuse levers."
       >
         <FieldGroup>
           <RadioGroup
@@ -481,6 +496,54 @@ function SettingsForm({ event }: { event: Json<Event> }) {
                 n votes on one project cost n² credits — {form.voteBudget || 0} credits allow up to{" "}
                 {Math.floor(Math.sqrt(Math.max(0, form.voteBudget || 0)))} votes on a single
                 project.
+              </FieldDescription>
+            </Field>
+          </div>
+
+          <div className="grid gap-5 sm:grid-cols-3">
+            <Field>
+              <FieldLabel htmlFor="votingMode">Voting mode</FieldLabel>
+              <Select
+                value={form.votingMode}
+                onValueChange={(v) => set("votingMode", v as VotingMode)}
+              >
+                <SelectTrigger id="votingMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="quadratic">Counted vote (quadratic)</SelectItem>
+                  <SelectItem value="writeup">Write-up quest (judges decide)</SelectItem>
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                Write-up mode collects public input with no live tally; the panel makes the final
+                pick.
+              </FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="votingShortlistSize">Shortlist size</FieldLabel>
+              <Input
+                id="votingShortlistSize"
+                type="number"
+                min={0}
+                max={100}
+                value={form.votingShortlistSize}
+                onChange={(e) => set("votingShortlistSize", e.target.valueAsNumber)}
+              />
+              <FieldDescription>
+                0 = every submitted project is votable. Otherwise only the top-N by judged rank.
+              </FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="votingElectorateLockAt">Electorate lock</FieldLabel>
+              <Input
+                id="votingElectorateLockAt"
+                type="datetime-local"
+                value={form.votingElectorateLockAt}
+                onChange={(e) => set("votingElectorateLockAt", e.target.value)}
+              />
+              <FieldDescription>
+                Only accounts created on or before this time may vote. Leave empty to allow all.
               </FieldDescription>
             </Field>
           </div>

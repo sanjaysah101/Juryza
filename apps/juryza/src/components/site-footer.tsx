@@ -15,6 +15,7 @@ const COLUMNS = [
   {
     title: "Developers",
     links: [
+      { href: "/docs", label: "Documentation" },
       { href: "/docs/api", label: "API reference" },
       { href: "/api/openapi.json", label: "OpenAPI spec" },
       { href: "/settings/tokens", label: "API tokens" },

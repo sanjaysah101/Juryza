@@ -24,7 +24,7 @@ const LINKS = [
   { href: "/events", label: "Events" },
   { href: "/#features", label: "Features" },
   { href: "/#how-it-works", label: "How it works" },
-  { href: "/docs/api", label: "API" },
+  { href: "/docs", label: "Docs" },
 ];
 
 export function SiteHeader() {

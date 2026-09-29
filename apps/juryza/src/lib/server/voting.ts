@@ -3,9 +3,10 @@ import { cookies } from "next/headers";
 import { and, eq, isNotNull } from "drizzle-orm";
 
 import type { Event } from "@/lib/db";
-import { db, voter } from "@/lib/db";
+import { db, user as userTable, voter } from "@/lib/db";
 import { secretToken } from "@/lib/ids";
 import { hashToken, type Identity } from "@/lib/server/identity";
+import { computeResults } from "@/lib/server/results";
 
 /**
  * Who is voting? Resolves the caller to a stable `voterKey` under the event's
@@ -75,4 +76,50 @@ export function emailAllowed(e: Pick<Event, "votingEmailDomains">, email: string
   return e.votingEmailDomains.some(
     (d) => domain === d.replace(/^@/, "") || domain.endsWith(`.${d.replace(/^@/, "")}`)
   );
+}
+
+/**
+ * Anti-abuse levers, all enforced server-side and all no-ops at their defaults.
+ * These implement the mechanisms documented at `/docs/voting`, drawn from the
+ * ways community voting is repeatedly gamed.
+ */
+
+/**
+ * Electorate lock: when `votingElectorateLockAt` is set, only signed-in accounts
+ * created on or before that instant may vote — automating the "member before
+ * kickoff" rule without a hand-maintained list. Anonymous and email voters have
+ * no account age, so the lock only applies to `user:` voters; organizers who
+ * want the lock should pair it with the `authenticated` access mode.
+ */
+export async function electorateAllows(
+  e: Pick<Event, "votingElectorateLockAt">,
+  me: Identity | null
+): Promise<boolean> {
+  const lockAt = e.votingElectorateLockAt;
+  if (!lockAt || !me) return !lockAt; // no lock → allow; lock set but no account → deny
+  const [row] = await db
+    .select({ createdAt: userTable.createdAt })
+    .from(userTable)
+    .where(eq(userTable.id, me.userId))
+    .limit(1);
+  return !!row && row.createdAt.getTime() <= new Date(lockAt).getTime();
+}
+
+/**
+ * The set of project ids a community vote may target. When
+ * `votingShortlistSize` is 0 every submitted project is votable; otherwise only
+ * the top N by judged rank, so a poll runs on the finalists alone. `null` means
+ * "no restriction" and the caller need not check membership.
+ */
+export async function votableProjectIds(
+  e: Pick<Event, "id" | "votingShortlistSize">
+): Promise<Set<string> | null> {
+  if (!e.votingShortlistSize || e.votingShortlistSize <= 0) return null;
+  const { projects } = await computeResults(e);
+  const shortlisted = projects
+    .filter((p) => p.rank !== null)
+    .sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9))
+    .slice(0, e.votingShortlistSize)
+    .map((p) => p.id);
+  return new Set(shortlisted);
 }

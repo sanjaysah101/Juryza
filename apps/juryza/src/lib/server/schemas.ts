@@ -28,6 +28,11 @@ const eventFields = {
   votingAccess: z.enum(["open", "email", "authenticated"]),
   votingEmailDomains: z.array(z.string().trim().toLowerCase().min(3)).max(20),
   voteBudget: z.number().int().min(1).max(400),
+  // Anti-abuse levers (see /docs/voting). All optional; defaults preserve the
+  // original counted-quadratic behaviour.
+  votingMode: z.enum(["quadratic", "writeup"]),
+  votingShortlistSize: z.number().int().min(0).max(100),
+  votingElectorateLockAt: optionalDate,
 };
 
 export const eventInput = z.object({
@@ -40,6 +45,9 @@ export const eventInput = z.object({
   votingAccess: eventFields.votingAccess.default("authenticated"),
   votingEmailDomains: eventFields.votingEmailDomains.default([]),
   voteBudget: eventFields.voteBudget.default(16),
+  votingMode: eventFields.votingMode.default("quadratic"),
+  votingShortlistSize: eventFields.votingShortlistSize.default(0),
+  votingElectorateLockAt: eventFields.votingElectorateLockAt,
   tracks: z.array(z.string().trim().min(1).max(60)).max(30).default([]),
 });
 

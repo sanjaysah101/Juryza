@@ -732,9 +732,17 @@ curl "$JURYZA_URL/api/me" -H "Authorization: Bearer $JURYZA_TOKEN"`;
   return (
     <section id="introduction" className="flex scroll-mt-24 flex-col gap-6">
       <div className="flex flex-col gap-3">
-        <Badge variant="outline" className="h-6">
-          <ServerCog /> REST · OpenAPI 3.1 · {count} operations
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/docs"
+            className="text-muted-foreground hover:text-foreground text-sm underline-offset-4 hover:underline"
+          >
+            ← Docs
+          </Link>
+          <Badge variant="outline" className="h-6">
+            <ServerCog /> REST · OpenAPI 3.1 · {count} operations
+          </Badge>
+        </div>
         <h1 className="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
           API reference
         </h1>
@@ -1075,8 +1083,20 @@ export default function ApiReferencePage() {
                   id={tagAnchor(g.tag)}
                   className="flex scroll-mt-24 flex-col gap-4"
                 >
-                  <div className="flex flex-col gap-1">
-                    <h2 className="text-xl font-semibold tracking-tight">{g.tag}</h2>
+                  <div className="flex flex-col gap-1 border-b pb-2">
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-xl font-semibold tracking-tight">
+                        <a
+                          href={`#${tagAnchor(g.tag)}`}
+                          className="underline-offset-4 hover:underline"
+                        >
+                          {g.tag}
+                        </a>
+                      </h2>
+                      <Badge variant="outline" className="tabular-nums">
+                        {g.entries.length}
+                      </Badge>
+                    </div>
                     {g.description && (
                       <p className="text-muted-foreground text-sm">{g.description}</p>
                     )}

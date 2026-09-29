@@ -165,6 +165,16 @@ export const event = pgTable("event", {
   votingAccess: text("voting_access").default("authenticated").notNull(), // open | email | authenticated
   votingEmailDomains: jsonb("voting_email_domains").$type<string[]>().default([]).notNull(),
   voteBudget: integer("vote_budget").default(16).notNull(),
+  // Anti-abuse levers (all default to the pre-existing behaviour):
+  //  - votingMode `quadratic` (a counted public vote) or `writeup` (public
+  //    input with no live tally; the judging panel decides).
+  //  - votingShortlistSize `0` = every submitted project is votable; `N` = only
+  //    the top N by judged rank, so a poll runs on finalists alone.
+  //  - votingElectorateLockAt: only accounts created on or before this instant
+  //    may vote — automates the "member before kickoff" rule.
+  votingMode: text("voting_mode").default("quadratic").notNull(), // quadratic | writeup
+  votingShortlistSize: integer("voting_shortlist_size").default(0).notNull(),
+  votingElectorateLockAt: timestamp("voting_electorate_lock_at"),
   createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
   createdAt: createdAt(),
   updatedAt: timestamp("updated_at")

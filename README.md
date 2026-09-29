@@ -31,6 +31,30 @@ No cloud account, hosted database or external API. Reseed from scratch with
 `SEED_RESET=1 docker compose up`; wipe with `docker compose down -v`. Every boot
 re-mints the checker tokens in `.dogfood.toml`, so the file is always valid.
 
+### Two datasets: acceptance vs. real-world demo
+
+The seed can draw on two datasets, for two different jobs:
+
+- **`fixtures.json` — the DOGFOOD dataset (always seeded).** The dataset the
+  hackathon provided, engineered with awkward cases (a flat judge, a duplicate
+  submission, unfinished review batches) to *prove* the judging maths. It is the
+  source of truth for acceptance: `run.py` targets its `sample-hack-2026` event
+  and the normalization proof is computed from it. It always seeds, unchanged.
+- **Hackathon Raptors showcase — real published results (opt-in).** 31 real
+  Raptors events rebuilt from the community's own dataset
+  ([rank.raptors.dev](https://rank.raptors.dev/data/leaderboard.json)) — real
+  projects, teams, placements and prizes — so a judge can see Juryza driving
+  authentic, real-world data. It is **off by default** (it would only add noise
+  to the acceptance database) and enabled with `SEED_SHOWCASE=1`:
+
+  ```sh
+  SEED_SHOWCASE=1 SEED_RESET=1 docker compose up
+  ```
+
+  Rule of thumb: `fixtures.json` is for **correctness**, the Raptors data is for
+  **demonstration**. Use the plain `docker compose up` for the acceptance run;
+  add `SEED_SHOWCASE=1` when you want to browse real events end to end.
+
 > **Upgrading from an earlier checkout?** The schema changed substantially. Run
 > `docker compose down -v` once (or `SEED_RESET=1 docker compose up --build`)
 > so the database is re-created.

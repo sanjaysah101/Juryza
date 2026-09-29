@@ -18,7 +18,7 @@ import {
 } from "@/lib/server/http";
 import { requireUser, resolveIdentity } from "@/lib/server/identity";
 import { enforceRateLimit } from "@/lib/server/rate-limit";
-import { resolveVoter } from "@/lib/server/voting";
+import { electorateAllows, resolveVoter, votableProjectIds } from "@/lib/server/voting";
 import { dispatch } from "@/lib/server/webhooks";
 import { creditsSpent, maxVotesFor, tally, voteCost } from "@/lib/voting";
 
@@ -44,6 +44,10 @@ export const POST = handle<P>(async (req, { event: ref }) => {
   const me = await resolveIdentity(req);
   const e = await loadEvent(ref, me);
   if (!votingIsOpen(e)) throw forbidden("Voting is not open for this event");
+  // Write-up mode collects public input with no counted ballot; the panel
+  // decides, so casting a vote is refused (the tally is also withheld below).
+  if (e.votingMode === "writeup")
+    throw forbidden("This event uses a write-up quest; the judging panel decides");
 
   const ip = clientIp(req);
   enforceRateLimit(`vote:ip:${e.id}:${ip}`, 60, 60_000);
@@ -52,6 +56,12 @@ export const POST = handle<P>(async (req, { event: ref }) => {
   if (voterState.status === "verify-email") throw unauthorized("Verify your email address to vote");
   const { voterKey } = voterState;
   enforceRateLimit(`vote:voter:${e.id}:${voterKey}`, 30, 60_000);
+
+  // Electorate lock: only accounts that existed before the cutoff may vote.
+  if (!(await electorateAllows(e, me))) {
+    await audit({ eventId: e.id, action: "vote.blocked.electorate", detail: { voterKey }, req });
+    throw forbidden("Only accounts registered before voting opened can vote in this event");
+  }
 
   const b = await readBody(req, body);
   if (b.votes > maxVotesFor(e.voteBudget))
@@ -63,6 +73,20 @@ export const POST = handle<P>(async (req, { event: ref }) => {
     .where(and(eq(project.id, b.projectId), eq(project.eventId, e.id)))
     .limit(1);
   if (target?.status !== "submitted") throw notFound("Project not found");
+
+  // Shortlist: when set, only the top-N judged projects are votable.
+  const votable = await votableProjectIds(e);
+  if (votable && !votable.has(target.id) && b.votes > 0) {
+    await audit({
+      eventId: e.id,
+      action: "vote.blocked.not_shortlisted",
+      target: target.id,
+      detail: { voterKey },
+      req,
+    });
+    throw forbidden("Only shortlisted finalists can be voted for in this event");
+  }
+
   if (me && target.teamId) {
     const [own] = await db
       .select({ userId: teamMember.userId })

@@ -34,6 +34,7 @@ import {
   track,
   user as userTable,
 } from "@/lib/db";
+import { raptorsBundles } from "@/lib/db/raptors";
 import { id, secretToken } from "@/lib/ids";
 import { docToText } from "@/lib/rich-text";
 import { auth } from "@/lib/server/auth";
@@ -456,6 +457,32 @@ async function main() {
     techTags: ["TypeScript", "Postgres"],
     status: "draft",
   });
+
+  // ---- 4. Hackathon Raptors showcase (opt-in) ---------------------------
+  // Real past events, rebuilt from the community's published dataset (see
+  // lib/db/raptors.ts), imported through the same path as every other event and
+  // then published so an evaluator sees computed leaderboards and awards on
+  // real-world data. Off by default so the DOGFOOD acceptance database stays
+  // exactly the fixture event + sandbox; enable with SEED_SHOWCASE=1. Each
+  // import is best-effort: one bad event never blocks the seed.
+  if (process.env.SEED_SHOWCASE === "1") {
+    const showcase = raptorsBundles();
+    let showcaseOk = 0;
+    for (const bundle of showcase) {
+      try {
+        const report = await importBundle(bundle, {
+          createdBy: organizerId,
+          visibility: "published",
+          passwordFor: () => "member-password-123",
+        });
+        await db.update(event).set({ resultsPublished: true }).where(eq(event.id, report.eventId));
+        showcaseOk += 1;
+      } catch (err) {
+        console.warn(`[seed] raptors showcase "${bundle.event.slug}" skipped:`, err);
+      }
+    }
+    console.info(`[seed] raptors showcase: ${showcaseOk}/${showcase.length} events`);
+  }
 
   await writeCheckerConfig();
 }

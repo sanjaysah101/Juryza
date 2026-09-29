@@ -90,6 +90,9 @@ export const POST = handle(async (req: NextRequest) => {
       votingAccess: b.votingAccess,
       votingEmailDomains: b.votingEmailDomains,
       voteBudget: b.voteBudget,
+      votingMode: b.votingMode,
+      votingShortlistSize: b.votingShortlistSize,
+      votingElectorateLockAt: toDate(b.votingElectorateLockAt),
       createdBy: me.userId,
     });
     if (b.tracks.length) {

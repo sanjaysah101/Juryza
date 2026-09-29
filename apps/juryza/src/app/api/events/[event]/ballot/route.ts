@@ -5,7 +5,7 @@ import { hasVoting, votingIsOpen } from "@/lib/phase";
 import { loadEvent } from "@/lib/server/events";
 import { handle } from "@/lib/server/http";
 import { resolveIdentity } from "@/lib/server/identity";
-import { resolveVoter } from "@/lib/server/voting";
+import { electorateAllows, resolveVoter, votableProjectIds } from "@/lib/server/voting";
 import { creditsSpent, maxVotesFor, seededShuffle } from "@/lib/voting";
 
 /**
@@ -60,6 +60,13 @@ export const GET = handle<{ event: string }>(async (req, { event: ref }) => {
     : new Set<string>();
   const allocation = new Map(mine.map((m) => [m.projectId, m.votes]));
 
+  // Anti-abuse levers reflected in the ballot: a shortlist restricts which
+  // projects appear, and the electorate lock reports whether this caller may
+  // vote at all. Write-up mode presents input without a counted ballot.
+  const shortlist = await votableProjectIds(e);
+  const shortlisted = shortlist ? projects.filter((p) => shortlist.has(p.id)) : projects;
+  const eligible = await electorateAllows(e, me);
+
   return {
     event: {
       id: e.id,
@@ -72,12 +79,15 @@ export const GET = handle<{ event: string }>(async (req, { event: ref }) => {
     open: votingIsOpen(e),
     access: e.votingAccess,
     allowedDomains: e.votingEmailDomains,
+    mode: e.votingMode,
+    shortlisted: shortlist !== null,
+    eligible,
     voter:
       voterState.status === "ready" ? { status: "ready", label: voterState.label } : voterState,
     budget: e.voteBudget,
     spent: creditsSpent(mine),
     maxVotesPerProject: maxVotesFor(e.voteBudget),
-    projects: seededShuffle(projects, voterKey).map(({ teamId, ...p }) => ({
+    projects: seededShuffle(shortlisted, voterKey).map(({ teamId, ...p }) => ({
       ...p,
       ownTeam: teamId !== null && myTeamIds.has(teamId),
       myVotes: allocation.get(p.id) ?? 0,
