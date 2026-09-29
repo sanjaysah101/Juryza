@@ -20,6 +20,10 @@ Built for [DOGFOOD 2026](https://dogfoodhack.com). MIT licensed.
 ![Juryza Complete Roles & Judging Walkthrough](./juryza_complete_roles_demo.webp)
 *A complete walkthrough demonstrating all roles: Organizer panel & rubric calibration, Judge blind isolated scoring, Pairwise Duel Arena with Bradley–Terry ranking, and Participant Notion-style editor.*
 
+> DOGFOOD also requires a five-minute lifecycle demo video. The walkthrough
+> image above is not that deliverable; the only WebM recording currently in the
+> workspace is 74 seconds, so the video link is still outstanding.
+
 ---
 
 ## Run it
@@ -32,9 +36,9 @@ Then open **http://localhost:8080** and sign in with one of the demo buttons on
 the login page. The boot:
 
 1. starts PostgreSQL 18 and the portal,
-2. pushes the schema and seeds — the DOGFOOD fixture event (41 projects, 30
-   judges, 126 scores, submissions closed, community voting open) **and** a live
-   sandbox event with submissions open,
+2. applies pending database migrations and seeds — the DOGFOOD fixture event
+  (41 projects, 30 judges, 126 scores, submissions closed, community voting
+  open) **and** a live sandbox event with submissions open,
 3. writes `.dogfood.toml` with fresh API tokens,
 4. serves the portal on port 8080.
 
@@ -66,9 +70,10 @@ The seed can draw on two datasets, for two different jobs:
   **demonstration**. Use the plain `docker compose up` for the acceptance run;
   add `SEED_SHOWCASE=1` when you want to browse real events end to end.
 
-> **Upgrading from an earlier checkout?** The schema changed substantially. Run
-> `docker compose down -v` once (or `SEED_RESET=1 docker compose up --build`)
-> so the database is re-created.
+> **Upgrading an existing database?** Startup applies tracked migrations. A
+> populated pre-migration database is baselined when its required tables are
+> present. Back up data before schema changes; `docker compose down -v` deletes
+> the database volume and is only for an intentional full reset.
 
 ### Demo accounts
 
@@ -97,11 +102,11 @@ python run.py .dogfood.toml
 py run.py .dogfood.toml
 ```
 
-The committed [`acceptance-report.txt`](./acceptance-report.txt) is that output
-against the containerized build (run on port 8081 alongside an older local
-stack; the image and seed are identical). The suite has checks for T1 and T2 only, so it
-reports T3/T4 as "claimed but not verified" for every team; the T3/T4 behaviour
-is covered by our own integration tests (below) and is demonstrable in the UI.
+The committed [`acceptance-report.txt`](./acceptance-report.txt) is generated
+against the containerized build on port 8080. Juryza claims T1–T4 in
+`.dogfood.toml`; the official suite verifies T1 and T2 only, so its report marks
+T3/T4 as claimed but not verified. Those tiers' features are implemented, but
+the official checker does not exercise them.
 
 ## A tour in five minutes
 
@@ -261,7 +266,8 @@ An in-depth architectural breakdown written for the hackathon write-up challenge
 bun install
 docker compose up -d db
 cd apps/juryza
-bun run db:push && bun run seed
+bun run db:migrate
+bun run seed
 bun run dev          # http://localhost:3000
 ```
 

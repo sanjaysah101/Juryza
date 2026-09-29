@@ -2,10 +2,10 @@
 #
 #   docker compose up
 #
-# Brings up Postgres and the portal, pushes the schema, seeds the DOGFOOD
-# fixtures plus a live sandbox event, writes .dogfood.toml back to this
-# directory, and serves the portal at http://localhost:8080. Runs entirely
-# offline — no cloud account, no hosted database, no external API.
+# Brings up Postgres and the portal, applies pending migrations, seeds the
+# DOGFOOD fixtures plus a live sandbox event, writes .dogfood.toml back to this
+# directory, and serves the portal at http://localhost:8080. Runs offline at
+# runtime — no cloud account, hosted database, or external API is required.
 #
 # Reseed from scratch:   SEED_RESET=1 docker compose up
 # Add real-world demo:   SEED_SHOWCASE=1 SEED_RESET=1 docker compose up
@@ -50,7 +50,7 @@ services:
       # Set to 1 to wipe and reseed the database on start.
       SEED_RESET: ${SEED_RESET:-0}
       # Set to 1 to also seed the Hackathon Raptors real-world showcase events
-      SEED_SHOWCASE: ${SEED_SHOWCASE:-1}
+      SEED_SHOWCASE: ${SEED_SHOWCASE:-0}
     ports:
       - "8080:8080"
     volumes:

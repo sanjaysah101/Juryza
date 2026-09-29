@@ -6,13 +6,13 @@ base_url = "http://localhost:8080"
 
 [tiers]
 claimed = ["T1", "T2", "T3", "T4"]
-pitch = "Self-hosted hackathon platform: multi-event, backend-enforced judge isolation, documented z-score + Bradley-Terry judging, quadratic voting, Notion-style write-ups, REST API + webhooks + signed certificates."
+pitch = "Self-hosted hackathon platform with judging, community voting, a REST API, webhooks, certificates and bulk import/export."
 
 [auth]
-organizer   = "Authorization: Bearer jz_s4MvIZIRRTQXTLtPuGCTUH_ZPg_hRG7gE7HQQkj5"
-judge_a     = "Authorization: Bearer jz_4akgoaGimA9pA_Ctm5sul2ixkd-6aXVnYWS5ICAD"
-judge_b     = "Authorization: Bearer jz_SIiktCSuHLgMF_X30LA1t21H68wUIbzbG9eXEjYm"
-participant = "Authorization: Bearer jz_A9Erzx2kdlHLBXbAgAGFXIK1JSCXZr98iJnmpcVe"
+organizer   = "Authorization: Bearer jz_zRsTB5BzHtMPUPID4xieBRmAjYCN-KHXA09ximub"
+judge_a     = "Authorization: Bearer jz_cN8lVxWHKc1ZS0KJjhHrd8NHHg9Xi9SNszJZyDpY"
+judge_b     = "Authorization: Bearer jz_4XiVTrNQQZLJWQCqGv9a83X66ciIjIKwdLxIqCQc"
+participant = "Authorization: Bearer jz_gj6pQ1Pbp3O75FL49CdCws5WV2epgjnegMzkdp0G"
 
 [routes]
 gallery      = "/api/events/sample-hack-2026/projects"

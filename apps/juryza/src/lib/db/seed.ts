@@ -568,7 +568,7 @@ base_url = "${baseUrl}"
 
 [tiers]
 claimed = ["T1", "T2", "T3", "T4"]
-pitch = "Self-hosted hackathon platform: multi-event, backend-enforced judge isolation, documented z-score + Bradley-Terry judging, quadratic voting, Notion-style write-ups, REST API + webhooks + signed certificates."
+pitch = "Self-hosted hackathon platform with judging, community voting, a REST API, webhooks, certificates and bulk import/export."
 
 [auth]
 organizer   = "Authorization: Bearer ${tokens.organizer}"

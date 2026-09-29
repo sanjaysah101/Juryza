@@ -1,10 +1,11 @@
 # DATA-MODEL.md — schema, and the way in and out
 
-The whole schema is one file: `apps/juryza/src/lib/db/schema.ts` (Drizzle,
-PostgreSQL 18). Every id is text with a type prefix (`evt_`, `prj_`, `tm_`,
-`scr_` …) so a value in a log or CSV says what it is; imported rows keep their
-original ids when free (fixture ids such as `prj_01` survive), so references
-line up with the source data.
+The whole schema is one file: `packages/database/src/schema.ts` (Drizzle,
+PostgreSQL 18). The `@juryza/database` workspace also owns the connection pool
+and migration configuration. Every id is text with a type prefix (`evt_`,
+`prj_`, `tm_`, `scr_` …) so a value in a log or CSV says what it is; imported
+rows keep their original ids when free (fixture ids such as `prj_01` survive),
+so references line up with the source data.
 
 ## Entity relationship
 
@@ -135,6 +136,11 @@ line up with the source data.
 
 ## Schema changes
 
-The container runs `drizzle-kit push` at start (idempotent, offline). For a
-long-lived production database, generate reviewed SQL migrations instead:
-`bun run --cwd apps/juryza db:generate`.
+Schema changes are versioned under `packages/database/drizzle/`. After editing
+`packages/database/src/schema.ts`, generate and review a migration from the app
+workspace with `bun run db:generate`, then apply it with `bun run db:migrate`.
+Container startup runs the migration runner, not `push`, so it applies only
+pending migrations. A populated database without Drizzle history is baselined
+against the initial schema when its required tables exist; an empty database
+runs the initial migration normally. `bun run db:push` remains available for
+explicit local work and keeps Drizzle's strict confirmation enabled.

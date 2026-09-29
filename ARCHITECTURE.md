@@ -3,12 +3,13 @@
 ## In one paragraph
 
 Juryza is one Next.js 16 application (App Router, React 19, React Compiler)
-backed by PostgreSQL 18 through Drizzle, with Better Auth for identity. It ships
-as two containers — the app and the database — and `docker compose up` pushes
-the schema, seeds the DOGFOOD fixtures plus a live sandbox event, writes
-`.dogfood.toml`, and serves on `:8080`, with no network access required. The
-REST API and the UI live in the same app, **the UI is built entirely on the
-public REST API**, and every authorization decision is made in the API layer.
+backed by PostgreSQL 18 through the `@juryza/database` workspace, with Better
+Auth for identity. It ships as two containers — the app and the database — and
+`docker compose up` applies tracked migrations, seeds the DOGFOOD fixtures plus
+a live sandbox event, writes `.dogfood.toml`, and serves on `:8080`, with no
+network access required at runtime. The REST API and the UI live in the same
+app, **the UI is built entirely on the public REST API**, and every
+authorization decision is made in the API layer.
 
 ## Stack and why
 
@@ -67,12 +68,13 @@ apps/juryza/src/
     api/**               the REST API (OpenAPI at /api/openapi.json)
   components/            app shell, editor, shared UI pieces
   lib/
-    db/                  schema.ts (whole model), index.ts (pool), seed.ts
+    db/                  app seed orchestration and compatibility exports
     server/              identity, auth, http, events, results, bundle (import/export),
                          exports, voting, webhooks, certificates, audit, rate-limit …
     *.ts                 pure logic, shared by server and client (no framework imports)
     __tests__/           unit tests + API integration tests (bun test)
 packages/
+  database/              Drizzle schema, pool, config and tracked SQL migrations
   ui/                    the shadcn/ui kit + theme (Base UI)
   config/                shared tsconfig and biome presets
 ```
@@ -103,7 +105,7 @@ a personal API token can do, through the same authorization code.
 - **Simplicity over abstraction.** The scaffold shipped a swappable-auth-provider
   contract, an HTTP client package and a schema-to-form renderer spread across
   five packages; one app with one auth provider needed none of it. Removing them
-  took the workspace from seven packages to two and made the auth path readable
+  took the workspace from seven packages to three and made the auth path readable
   top to bottom.
 
 ## Build and deploy
@@ -114,9 +116,14 @@ a personal API token can do, through the same authorization code.
 - `next.config.ts` pins the workspace root for tracing, sets security headers
   (`X-Frame-Options: DENY` everywhere except `/embed/*`, which allows framing),
   and emits a standalone server.
-- The entrypoint waits for Postgres, runs `drizzle-kit push`, seeds (idempotent;
-  `SEED_RESET=1` reseeds), copies static assets into the standalone bundle and
-  starts it.
+- The entrypoint waits for Postgres, runs the tracked migration runner, executes
+  a build-time bundled seed script (idempotent; `SEED_RESET=1` reseeds), and
+  starts the standalone server. Existing populated databases without migration
+  history are baselined; later boots apply only pending migrations. Strict
+  `db:push` remains an explicit developer operation.
+- The runtime image contains Next's traced standalone dependencies and the
+  database migration tools, not the full development workspace dependency tree.
+  Next static and public assets are copied during the image build.
 
 ## Scaling beyond one box
 
