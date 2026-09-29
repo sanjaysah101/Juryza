@@ -853,6 +853,14 @@ op("post", "/api/events/{event}/pairwise", {
   returns: "`{ ok: true }`.",
   errors: [403],
 });
+op("delete", "/api/events/{event}/pairwise", {
+  tag: "Pairwise",
+  summary: "Undo last verdict",
+  description:
+    "403 unless the caller is on the panel; 403 once results are published. Deletes the judge's most recent pairwise comparison in this event.",
+  returns: "`{ ok: true, undone: { id, winnerId, loserId } }`.",
+  errors: [400, 403],
+});
 
 /* ────────────────────────────────── Voting ────────────────────────────────── */
 

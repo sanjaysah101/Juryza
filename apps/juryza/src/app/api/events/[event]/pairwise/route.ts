@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { bradleyTerry } from "@/lib/bradley-terry";
@@ -16,11 +16,9 @@ type P = { event: string };
  * Pairwise judging (Gavel-style, Bradley–Terry).
  *
  * GET  /api/events/:event/pairwise — the next two of the caller's assigned
- *      projects to compare. Pairs are chosen actively (lib/pairing.ts): pairs
- *      this judge has not seen, whose current strengths are closest, so each
- *      answer carries the most information. Plus this judge's progress.
+ *      projects to compare, along with matchup intensity, recent verdicts, and progress.
  * POST /api/events/:event/pairwise { winnerId, loserId } — record a verdict.
- *      Both projects must be assigned to the caller.
+ * DELETE /api/events/:event/pairwise — undo the caller's most recent verdict.
  */
 
 async function context(ref: string, userId: string) {
@@ -34,6 +32,8 @@ async function context(ref: string, userId: string) {
       title: project.title,
       tagline: project.tagline,
       description: project.description,
+      content: project.content,
+      videoUrl: project.videoUrl,
       thumbnailUrl: project.thumbnailUrl,
       repoUrl: project.repoUrl,
       liveUrl: project.liveUrl,
@@ -50,11 +50,25 @@ async function context(ref: string, userId: string) {
 export const GET = handle<P>(async (req, { event: ref }) => {
   const me = await requireUser(req);
   const { e, assigned } = await context(ref, me.userId);
+  const skip = req.nextUrl.searchParams.get("skip");
+  const skipPairs = skip
+    ? skip.split(",").map((s) => {
+        const [w, l] = s.split("|");
+        return { winnerId: w ?? "", loserId: l ?? "" };
+      })
+    : [];
+
   const [mine, all] = await Promise.all([
     db
-      .select({ winnerId: pairwiseVote.winnerId, loserId: pairwiseVote.loserId })
+      .select({
+        id: pairwiseVote.id,
+        winnerId: pairwiseVote.winnerId,
+        loserId: pairwiseVote.loserId,
+        createdAt: pairwiseVote.createdAt,
+      })
       .from(pairwiseVote)
-      .where(and(eq(pairwiseVote.eventId, e.id), eq(pairwiseVote.judgeId, me.userId))),
+      .where(and(eq(pairwiseVote.eventId, e.id), eq(pairwiseVote.judgeId, me.userId)))
+      .orderBy(desc(pairwiseVote.createdAt)),
     db
       .select({ winnerId: pairwiseVote.winnerId, loserId: pairwiseVote.loserId })
       .from(pairwiseVote)
@@ -63,14 +77,44 @@ export const GET = handle<P>(async (req, { event: ref }) => {
   const strengths = new Map(bradleyTerry(all).map((b) => [b.projectId, b.strength]));
   const pair = nextPair(
     assigned.map((a) => a.id),
-    mine,
+    [...mine, ...skipPairs],
     strengths
   );
   const byId = new Map(assigned.map((a) => [a.id, a]));
   const possible = (assigned.length * (assigned.length - 1)) / 2;
+
+  let matchup = null;
+  if (pair) {
+    const sA = strengths.get(pair[0]) ?? 1;
+    const sB = strengths.get(pair[1]) ?? 1;
+    const gap = Math.abs(Math.log(sA) - Math.log(sB));
+    matchup = {
+      gap,
+      isClose: gap < 0.35,
+      informationGain: gap < 0.35 ? "High" : gap < 0.8 ? "Medium" : "Standard",
+    };
+  }
+
+  const recent = mine.slice(0, 5).map((m) => {
+    const w = byId.get(m.winnerId);
+    const l = byId.get(m.loserId);
+    return {
+      id: m.id,
+      winnerId: m.winnerId,
+      winnerTitle: w?.title ?? "Project",
+      winnerThumb: w?.thumbnailUrl ?? null,
+      loserId: m.loserId,
+      loserTitle: l?.title ?? "Project",
+      loserThumb: l?.thumbnailUrl ?? null,
+      createdAt: m.createdAt,
+    };
+  });
+
   return {
     event: { slug: e.slug, name: e.name },
     pair: pair ? [byId.get(pair[0]), byId.get(pair[1])] : null,
+    matchup,
+    recent,
     progress: { compared: mine.length, possible },
   };
 });
@@ -98,4 +142,33 @@ export const POST = handle<P>(async (req, { event: ref }) => {
     req,
   });
   return { ok: true };
+});
+
+export const DELETE = handle<P>(async (req, { event: ref }) => {
+  const me = await requireUser(req);
+  const { e } = await context(ref, me.userId);
+  if (e.resultsPublished) throw forbidden("Results are published; judging is final");
+
+  const [lastVote] = await db
+    .select({
+      id: pairwiseVote.id,
+      winnerId: pairwiseVote.winnerId,
+      loserId: pairwiseVote.loserId,
+    })
+    .from(pairwiseVote)
+    .where(and(eq(pairwiseVote.eventId, e.id), eq(pairwiseVote.judgeId, me.userId)))
+    .orderBy(desc(pairwiseVote.createdAt))
+    .limit(1);
+
+  if (!lastVote) throw badRequest("No recent comparison to undo");
+
+  await db.delete(pairwiseVote).where(eq(pairwiseVote.id, lastVote.id));
+  await audit({
+    eventId: e.id,
+    actor: me,
+    action: "pairwise.undone",
+    target: `${lastVote.winnerId}>${lastVote.loserId}`,
+    req,
+  });
+  return { ok: true, undone: lastVote };
 });
