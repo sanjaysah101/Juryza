@@ -24,6 +24,8 @@ Built for [DOGFOOD 2026](https://dogfoodhack.com). MIT licensed.
 > image above is not that deliverable; the only WebM recording currently in the
 > workspace is 74 seconds, so the video link is still outstanding.
 
+**[Watch the complete walkthrough on YouTube (8 min) ↗](https://youtu.be/gfsorn4l_WI)**
+
 ---
 
 ## Run it
