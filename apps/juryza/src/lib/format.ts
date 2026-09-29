@@ -47,12 +47,26 @@ export function formatNumber(n: number | null | undefined, digits = 0) {
 }
 
 export function initials(name: string | null | undefined) {
-  return (name ?? "?")
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase())
-    .join("");
+  if (!name) return "?";
+  const cleaned = name.replace(/^[^a-zA-Z0-9]+/, "").trim();
+  if (!cleaned) return "?";
+
+  // Check if multiple words or separated by dots/dashes/underscores
+  const parts = cleaned.split(/[\s_\-.]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    const first = parts[0]?.[0] ?? "";
+    const second = parts[1]?.[0] ?? "";
+    return (first + second).toUpperCase();
+  }
+
+  const single = parts[0] ?? "";
+  // Check for PascalCase or camelCase like "PatParticipant" or "JohnDoe"
+  const caps = single.match(/[A-Z]/g);
+  if (caps && caps.length >= 2) {
+    return (caps[0] + caps[1]).toUpperCase();
+  }
+
+  return (single[0] ?? "?").toUpperCase();
 }
 
 export function pluralize(n: number, one: string, many = `${one}s`) {

@@ -34,7 +34,7 @@ import {
   track,
   user as userTable,
 } from "@/lib/db";
-import { raptorsBundles } from "@/lib/db/raptors";
+import { raptorsBundles, raptorsPeople } from "@/lib/db/raptors";
 import { id, secretToken } from "@/lib/ids";
 import { docToText } from "@/lib/rich-text";
 import { auth } from "@/lib/server/auth";
@@ -64,13 +64,32 @@ async function createUser(o: {
   role: string;
   username: string;
   headline?: string;
+  image?: string;
+  githubUrl?: string;
+  bio?: string;
+  skills?: string[];
+  points?: number;
+  prizeUsd?: number;
+  awardsCount?: number;
 }) {
   const res = await auth.api.signUpEmail({
     body: { email: o.email, name: o.name, password: o.password },
   });
   await db
     .update(userTable)
-    .set({ role: o.role, username: o.username, headline: o.headline ?? null, emailVerified: true })
+    .set({
+      role: o.role,
+      username: o.username,
+      headline: o.headline ?? null,
+      image: o.image ?? null,
+      githubUrl: o.githubUrl ?? null,
+      bio: o.bio ?? null,
+      skills: o.skills ?? [],
+      points: o.points ?? 0,
+      prizeUsd: o.prizeUsd ?? 0,
+      awardsCount: o.awardsCount ?? 0,
+      emailVerified: true,
+    })
     .where(eq(userTable.id, res.user.id));
   return res.user.id;
 }
@@ -244,6 +263,7 @@ async function main() {
   const fixture = await importBundle(fixtureBundle, {
     createdBy: organizerId,
     visibility: "published",
+    isFixture: true,
     passwordFor: (email) =>
       fx.judges.some((j) => j.email === email) ? "judge-password-123" : "member-password-123",
   });
@@ -328,6 +348,7 @@ async function main() {
     location: "Online + Berlin",
     hue: 160,
     visibility: "published",
+    isFixture: true,
     submissionsOpen: new Date(now - 2 * DAY),
     submissionsClose: new Date(now + 10 * DAY),
     judgingClose: new Date(now + 14 * DAY),
@@ -458,14 +479,37 @@ async function main() {
     status: "draft",
   });
 
-  // ---- 4. Hackathon Raptors showcase (opt-in) ---------------------------
+  // ---- 4. Hackathon Raptors showcase -----------------------------------
   // Real past events, rebuilt from the community's published dataset (see
-  // lib/db/raptors.ts), imported through the same path as every other event and
-  // then published so an evaluator sees computed leaderboards and awards on
-  // real-world data. Off by default so the DOGFOOD acceptance database stays
-  // exactly the fixture event + sandbox; enable with SEED_SHOWCASE=1. Each
-  // import is best-effort: one bad event never blocks the seed.
-  if (process.env.SEED_SHOWCASE === "1") {
+  // lib/db/raptors.ts), imported through the same path as every other event.
+  // Pre-seed all real builders (including sanjaysah101) with their GitHub
+  // avatars, real usernames, stats, and uniform password (member-password-123).
+  if (process.env.SEED_SHOWCASE !== "0") {
+    const people = raptorsPeople();
+    console.info(`[seed] pre-seeding ${people.length} real builders from Hackathon Raptors...`);
+    for (const p of people) {
+      try {
+        await createUser({
+          email: p.email,
+          name: p.name,
+          username: p.username,
+          password: "member-password-123",
+          role: "participant",
+          headline: p.headline,
+          bio: p.bio,
+          image: p.image,
+          githubUrl: p.githubUrl ?? undefined,
+          skills: p.skills,
+          points: p.points,
+          prizeUsd: p.prizeUsd,
+          awardsCount: p.awardsCount,
+        });
+      } catch {
+        // Builder may already exist
+      }
+    }
+    console.info("[seed] real builders pre-seeded with avatars & stats.");
+
     const showcase = raptorsBundles();
     let showcaseOk = 0;
     for (const bundle of showcase) {
@@ -473,9 +517,13 @@ async function main() {
         const report = await importBundle(bundle, {
           createdBy: organizerId,
           visibility: "published",
+          isFixture: false,
           passwordFor: () => "member-password-123",
         });
-        await db.update(event).set({ resultsPublished: true }).where(eq(event.id, report.eventId));
+        await db
+          .update(event)
+          .set({ resultsPublished: true, isFixture: false })
+          .where(eq(event.id, report.eventId));
         showcaseOk += 1;
       } catch (err) {
         console.warn(`[seed] raptors showcase "${bundle.event.slug}" skipped:`, err);
@@ -553,6 +601,10 @@ csv_export   = "/api/events/sample-hack-2026/export?dataset=results"
   console.info("  judge A      judge.a@juryza.test      judge-a-password-123");
   console.info("  judge B      judge.b@juryza.test      judge-b-password-123");
   console.info("  participant  participant@juryza.test  participant-password-123");
+  console.info(
+    "  Sanjay Sah   sanjaysah101@raptors.community  member-password-123 (GitHub: sanjaysah101)"
+  );
+  console.info("  All participants password: member-password-123");
   console.info(`${line}\n`);
 }
 

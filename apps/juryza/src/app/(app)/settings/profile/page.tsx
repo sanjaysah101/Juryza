@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -33,10 +33,11 @@ import {
 import { Skeleton } from "@juryza/ui/components/ui/skeleton";
 import { Spinner } from "@juryza/ui/components/ui/spinner";
 import { Switch } from "@juryza/ui/components/ui/switch";
-import { Textarea } from "@juryza/ui/components/ui/textarea";
 
+import { RichEditor } from "@/components/editor/rich-editor";
 import { UserAvatar } from "@/components/user-avatar";
 import { ApiError, api } from "@/lib/api";
+import { docToText, isEmptyDoc, parseRichDoc } from "@/lib/rich-text";
 
 import { TagInput } from "../../projects/[id]/tag-input";
 
@@ -122,6 +123,7 @@ function ProfileForm({ user }: { user: Me }) {
   const [form, setForm] = useState(saved);
   const [usernameTaken, setUsernameTaken] = useState<string | null>(null);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
+  const initialBioDoc = useMemo(() => parseRichDoc(user.bio), [user.bio]);
 
   const changed = (Object.keys(form) as (keyof Form)[]).filter(
     (k) => JSON.stringify(form[k]) !== JSON.stringify(saved[k])
@@ -275,18 +277,30 @@ function ProfileForm({ user }: { user: Me }) {
               </Field>
             </div>
             <Field>
-              <FieldLabel htmlFor="bio">Bio</FieldLabel>
-              <Textarea
-                id="bio"
-                value={form.bio}
-                onChange={(e) => set("bio", e.target.value)}
-                maxLength={2000}
-                rows={4}
-                placeholder="What do you like building? What are you looking for?"
-              />
-              <FieldDescription className="text-right tabular-nums">
-                {form.bio.length} / 2000
-              </FieldDescription>
+              <div className="flex items-center justify-between">
+                <FieldLabel htmlFor="bio">Bio</FieldLabel>
+                <span className="text-muted-foreground text-xs">
+                  TipTap rich editor · Press{" "}
+                  <kbd className="bg-muted text-muted-foreground rounded px-1 py-0.5 font-mono text-[10px]">
+                    /
+                  </kbd>{" "}
+                  for blocks
+                </span>
+              </div>
+              <div className="border-input focus-within:border-ring focus-within:ring-ring/50 min-h-[140px] rounded-lg border bg-background px-3.5 py-2.5 transition-colors focus-within:ring-3">
+                <RichEditor
+                  value={initialBioDoc}
+                  onChange={(doc) => set("bio", isEmptyDoc(doc) ? "" : JSON.stringify(doc))}
+                  placeholder="What do you like building? What are you looking for? Type / for blocks or select text to format..."
+                  className="min-h-[100px] text-sm"
+                />
+              </div>
+              <div className="text-muted-foreground flex items-center justify-between text-xs">
+                <span>Select text for floating toolbar (bold, italic, links, code)</span>
+                <span className="tabular-nums">
+                  {docToText(parseRichDoc(form.bio)).length} characters
+                </span>
+              </div>
             </Field>
             <Field>
               <FieldLabel htmlFor="skills">Skills</FieldLabel>

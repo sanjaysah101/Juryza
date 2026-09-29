@@ -67,6 +67,9 @@ export const user = pgTable("user", {
   githubUrl: text("github_url"),
   skills: jsonb("skills").$type<string[]>().default([]).notNull(),
   lookingForTeam: boolean("looking_for_team").default(false).notNull(),
+  points: integer("points").default(0).notNull(),
+  prizeUsd: integer("prize_usd").default(0).notNull(),
+  awardsCount: integer("awards_count").default(0).notNull(),
   createdAt: createdAt(),
   updatedAt: timestamp("updated_at")
     .$defaultFn(() => new Date())
@@ -158,6 +161,7 @@ export const event = pgTable("event", {
   votingOpen: timestamp("voting_open"),
   votingClose: timestamp("voting_close"),
   resultsPublished: boolean("results_published").default(false).notNull(),
+  isFixture: boolean("is_fixture").default(false).notNull(),
   // Team + judging configuration.
   maxTeamSize: integer("max_team_size").default(4).notNull(),
   reviewsPerProject: integer("reviews_per_project").default(3).notNull(),

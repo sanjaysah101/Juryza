@@ -9,10 +9,10 @@ claimed = ["T1", "T2", "T3", "T4"]
 pitch = "Self-hosted hackathon platform: multi-event, backend-enforced judge isolation, documented z-score + Bradley-Terry judging, quadratic voting, Notion-style write-ups, REST API + webhooks + signed certificates."
 
 [auth]
-organizer   = "Authorization: Bearer jz_-999sZ8pdcVx_dm2WFODJnciVuoNnSzPX0pj97PZ"
-judge_a     = "Authorization: Bearer jz_bWTjMIstcUtBIc9sRb9FBlGwY0rFuIJlRJyF4czY"
-judge_b     = "Authorization: Bearer jz_tD6N0qKCnydB4S8EdWUUoP3OvvRB_4B6fcHaZ12u"
-participant = "Authorization: Bearer jz_jx-rd0Xlfavtf1MG68CFzalvpJ-LXtXSldLdhw7Z"
+organizer   = "Authorization: Bearer jz_kWajoKS8i8hY9ahln6txyLcHR72RXkl0CRC-pUCS"
+judge_a     = "Authorization: Bearer jz_DG15ORlH3bFQnkyFvxTi6iNxuvBcMzfLdqifunjB"
+judge_b     = "Authorization: Bearer jz_D2rkHTpxIf2Fgfc1smAhZt7L99dKvi9DwT_rjOa0"
+participant = "Authorization: Bearer jz_zBggNSUTKA4Wy6p56yV65LVP-yBY4QF2eYd2nEKV"
 
 [routes]
 gallery      = "/api/events/sample-hack-2026/projects"

@@ -7,6 +7,8 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Award,
   CalendarDays,
+  DollarSign,
+  ExternalLink,
   FolderKanban,
   Gavel,
   GitBranch,
@@ -14,6 +16,8 @@ import {
   MapPin,
   PencilLine,
   Sparkles,
+  Star,
+  Trophy,
   UserX,
 } from "lucide-react";
 
@@ -30,10 +34,12 @@ import {
 } from "@juryza/ui/components/ui/empty";
 import { Skeleton } from "@juryza/ui/components/ui/skeleton";
 
+import { RichContent } from "@/components/editor/rich-content";
 import { UserAvatar } from "@/components/user-avatar";
 import { useViewer } from "@/components/viewer";
 import { api } from "@/lib/api";
 import { formatDate, hueOf } from "@/lib/format";
+import { parseRichDoc } from "@/lib/rich-text";
 import type { publicProfile } from "@/lib/server/people";
 import type { Json } from "@/lib/types";
 
@@ -104,36 +110,56 @@ export default function ProfilePage() {
     );
   }
 
-  const { user: u, projects, judged, certificates } = data;
+  const { user: u, projects, judged, certificates, participatedEvents } = data;
   const isMe = viewer?.userId === u.id;
   const hue = hueOf(u.name);
 
   return (
     <div className="flex flex-col">
       <div
-        className="h-32 border-b sm:h-40"
+        className="h-32 border-b sm:h-44"
         style={{
           background: `linear-gradient(135deg, oklch(0.7 0.12 ${hue} / 0.35), oklch(0.6 0.14 ${(hue + 60) % 360} / 0.2))`,
         }}
         aria-hidden
       />
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-4 pb-16 sm:px-6">
-        <header className="-mt-12 flex flex-col gap-5 sm:-mt-14">
+        <header className="-mt-14 flex flex-col gap-5 sm:-mt-16">
           <div className="flex items-end justify-between gap-4">
             <UserAvatar
               name={u.name}
               image={u.image}
-              className="ring-background size-24 text-2xl ring-4 sm:size-28"
+              className="ring-background size-24 ring-4 shadow-xl sm:size-32"
             />
-            {isMe && (
-              <Button
-                variant="outline"
-                nativeButton={false}
-                render={<Link href="/settings/profile" />}
-              >
-                <PencilLine /> Edit profile
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {u.githubUrl && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  nativeButton={false}
+                  render={
+                    <a
+                      href={u.githubUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5"
+                    />
+                  }
+                >
+                  <GitBranch className="size-4" /> GitHub <ExternalLink className="size-3" />
+                </Button>
+              )}
+              {isMe && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  nativeButton={false}
+                  render={<Link href="/settings/profile" />}
+                >
+                  <PencilLine className="size-4" /> Edit profile
+                </Button>
+              )}
+            </div>
           </div>
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -143,13 +169,57 @@ export default function ProfilePage() {
               )}
               {u.lookingForTeam && (
                 <Badge className="bg-success/15 text-success">
-                  <Sparkles /> Open to teams
+                  <Sparkles className="size-3" /> Open to teams
+                </Badge>
+              )}
+              {u.rank && (
+                <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                  <Trophy className="size-3" /> Rank #{u.rank} Overall
                 </Badge>
               )}
             </div>
-            <p className="text-muted-foreground">@{u.username}</p>
-            {u.headline && <p className="text-lg text-pretty">{u.headline}</p>}
+            <p className="text-muted-foreground font-mono text-sm">@{u.username}</p>
+            {u.headline && <p className="text-lg font-medium text-pretty">{u.headline}</p>}
           </div>
+
+          {/* Platform Performance Stats Bar */}
+          {(u.points > 0 || u.prizeUsd > 0 || u.awardsCount > 0 || (u.rank ?? 0) > 0) && (
+            <div className="bg-muted/40 grid grid-cols-2 gap-3 rounded-xl border p-4 sm:grid-cols-4">
+              <div className="flex flex-col">
+                <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                  <Trophy className="size-3.5 text-amber-500" /> Platform Standing
+                </span>
+                <span className="text-xl font-bold tracking-tight">
+                  {u.rank ? `#${u.rank}` : "Top 100"}
+                </span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                  <Star className="size-3.5 text-indigo-500" /> Total Points
+                </span>
+                <span className="text-xl font-bold tracking-tight tabular-nums">
+                  {u.points} pts
+                </span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                  <DollarSign className="size-3.5 text-emerald-500" /> Prizes Won
+                </span>
+                <span className="text-xl font-bold tracking-tight text-emerald-600 tabular-nums dark:text-emerald-400">
+                  ${(u.prizeUsd ?? 0).toLocaleString()}
+                </span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                  <Award className="size-3.5 text-purple-500" /> Hackathon Awards
+                </span>
+                <span className="text-xl font-bold tracking-tight tabular-nums">
+                  {u.awardsCount || projects.length}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="text-muted-foreground flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
             {u.location && (
               <span className="flex items-center gap-1.5">
@@ -188,14 +258,23 @@ export default function ProfilePage() {
             {u.bio && (
               <section className="flex flex-col gap-2">
                 <h2 className="text-lg font-semibold tracking-tight">About</h2>
-                <p className="text-muted-foreground leading-relaxed whitespace-pre-line">{u.bio}</p>
+                <RichContent
+                  doc={parseRichDoc(u.bio)}
+                  className="text-muted-foreground text-[0.95rem] leading-relaxed"
+                />
               </section>
             )}
 
-            <section className="flex flex-col gap-3">
-              <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
-                <FolderKanban className="text-muted-foreground size-5" /> Projects
-              </h2>
+            {/* Submitted Projects */}
+            <section className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+                  <FolderKanban className="text-muted-foreground size-5" /> Submitted Projects
+                  <span className="text-muted-foreground text-xs font-normal">
+                    ({projects.length})
+                  </span>
+                </h2>
+              </div>
               {projects.length ? (
                 <div className="grid gap-4 sm:grid-cols-2">
                   {projects.map((p) => {
@@ -204,11 +283,11 @@ export default function ProfilePage() {
                       <Link
                         key={p.id}
                         href={`/e/${p.eventSlug}/projects/${p.id}`}
-                        className="group"
+                        className="group focus-visible:ring-ring/50 rounded-xl outline-none focus-visible:ring-2"
                       >
-                        <Card className="h-full gap-0 py-0 transition-shadow group-hover:shadow-md">
+                        <Card className="h-full gap-0 overflow-hidden py-0 transition-all group-hover:-translate-y-0.5 group-hover:shadow-md">
                           {p.thumbnailUrl ? (
-                            // biome-ignore lint/performance/noImgElement: user-supplied thumbnail from any host
+                            // biome-ignore lint/performance/noImgElement: user-supplied thumbnail
                             <img
                               src={p.thumbnailUrl}
                               alt=""
@@ -216,27 +295,32 @@ export default function ProfilePage() {
                             />
                           ) : (
                             <div
-                              className="aspect-2/1 w-full"
+                              className="flex aspect-2/1 w-full items-end p-3 text-white"
                               style={{
-                                background: `linear-gradient(135deg, oklch(0.72 0.13 ${ph}), oklch(0.5 0.16 ${(ph + 50) % 360}))`,
+                                background: `linear-gradient(135deg, oklch(0.65 0.16 ${ph}), oklch(0.45 0.18 ${(ph + 60) % 360}))`,
                               }}
                               aria-hidden
-                            />
+                            >
+                              <span className="rounded bg-black/30 px-2 py-0.5 text-xs font-semibold backdrop-blur">
+                                {p.eventName}
+                              </span>
+                            </div>
                           )}
                           <CardContent className="flex flex-col gap-1.5 p-4">
-                            <p className="font-medium group-hover:underline">{p.title}</p>
+                            <p className="font-semibold group-hover:underline">{p.title}</p>
                             {p.tagline && (
                               <p className="text-muted-foreground line-clamp-2 text-sm">
                                 {p.tagline}
                               </p>
                             )}
-                            <p className="text-muted-foreground mt-1 text-xs">
-                              {p.eventName} · {p.teamName}
-                            </p>
+                            <div className="text-muted-foreground mt-2 flex items-center justify-between text-xs">
+                              <span>Team: {p.teamName}</span>
+                              <span>{formatDate(p.submittedAt)}</span>
+                            </div>
                             {p.techTags.length > 0 && (
-                              <div className="mt-1 flex flex-wrap gap-1">
+                              <div className="mt-2 flex flex-wrap gap-1">
                                 {p.techTags.slice(0, 4).map((t) => (
-                                  <Badge key={t} variant="outline">
+                                  <Badge key={t} variant="outline" className="text-xs">
                                     {t}
                                   </Badge>
                                 ))}
@@ -268,12 +352,76 @@ export default function ProfilePage() {
                 </Empty>
               )}
             </section>
+
+            {/* Hackathons Participated */}
+            {participatedEvents && participatedEvents.length > 0 && (
+              <section className="flex flex-col gap-3">
+                <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+                  <Trophy className="text-muted-foreground size-5" /> Hackathon History
+                  <span className="text-muted-foreground text-xs font-normal">
+                    ({participatedEvents.length} events)
+                  </span>
+                </h2>
+                <div className="flex flex-col divide-y rounded-xl border">
+                  {participatedEvents.map((evt) => (
+                    <div
+                      key={`${evt.id}-${evt.teamName}`}
+                      className="hover:bg-muted/40 flex items-center justify-between p-4 transition-colors"
+                    >
+                      <div className="flex flex-col gap-1">
+                        <Link
+                          href={`/e/${evt.slug}`}
+                          className="hover:text-primary font-semibold text-sm transition-colors"
+                        >
+                          {evt.name}
+                        </Link>
+                        {evt.tagline && (
+                          <p className="text-muted-foreground line-clamp-1 text-xs">
+                            {evt.tagline}
+                          </p>
+                        )}
+                        <p className="text-muted-foreground text-xs">Team: {evt.teamName}</p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        nativeButton={false}
+                        render={<Link href={`/e/${evt.slug}`} />}
+                      >
+                        View Event
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
 
           <aside className="flex flex-col gap-6">
+            {/* Global Standing CTA */}
+            <div className="bg-primary/5 flex flex-col gap-2.5 rounded-xl border p-4">
+              <div className="flex items-center gap-2 font-semibold text-sm">
+                <Trophy className="size-4 text-amber-500" /> Platform Leaderboard
+              </div>
+              <p className="text-muted-foreground text-xs">
+                See where @{u.username} ranks across all hackathons, prizes, and award categories.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-1 w-full"
+                nativeButton={false}
+                render={
+                  <Link href={`/leaderboard?highlight=${encodeURIComponent(u.username ?? "")}`} />
+                }
+              >
+                View in Leaderboard
+              </Button>
+            </div>
+
             {u.skills.length > 0 && (
               <section className="flex flex-col gap-2">
-                <h2 className="text-sm font-semibold">Skills</h2>
+                <h2 className="text-sm font-semibold">Skills & Stack</h2>
                 <div className="flex flex-wrap gap-1.5">
                   {u.skills.map((s) => (
                     <Badge key={s} variant="secondary">

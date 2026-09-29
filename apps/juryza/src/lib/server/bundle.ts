@@ -59,6 +59,7 @@ export const bundleSchema = z.object({
     voting_access: z.enum(["open", "email", "authenticated"]).optional(),
     vote_budget: z.number().int().optional(),
     hue: z.number().int().optional(),
+    is_fixture: z.boolean().optional(),
   }),
   tracks: z
     .array(z.object({ id: z.string(), name: z.string(), description: z.string().nullish() }))
@@ -141,6 +142,7 @@ export interface ImportOptions {
   /** Password for newly created accounts; random (reset required) when omitted. */
   passwordFor?: (email: string) => string;
   visibility?: "draft" | "published";
+  isFixture?: boolean;
 }
 
 export interface ImportReport {
@@ -254,6 +256,7 @@ export async function importBundle(input: Bundle, opts: ImportOptions): Promise<
     votingAccess: b.event.voting_access ?? "authenticated",
     voteBudget: b.event.vote_budget ?? 16,
     hue: b.event.hue ?? 250,
+    isFixture: opts.isFixture ?? b.event.is_fixture ?? false,
     createdBy: opts.createdBy,
   });
 

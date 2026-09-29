@@ -28,7 +28,11 @@ export const GET = handle(async (req: NextRequest) => {
         ? or(eq(event.visibility, "published"), eq(event.createdBy, me.userId))
         : eq(event.visibility, "published");
 
-  const rows = await db.select().from(event).where(visible).orderBy(desc(event.submissionsClose));
+  const rows = await db
+    .select()
+    .from(event)
+    .where(visible)
+    .orderBy(desc(event.isFixture), desc(event.submissionsClose));
   const ids = rows.map((r) => r.id);
   const [projectCounts, participantCounts] = ids.length
     ? await Promise.all([

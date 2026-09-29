@@ -22,6 +22,7 @@ import { useViewer } from "@/components/viewer";
 
 const LINKS = [
   { href: "/events", label: "Events" },
+  { href: "/leaderboard", label: "Leaderboard" },
   { href: "/#features", label: "Features" },
   { href: "/#how-it-works", label: "How it works" },
   { href: "/docs", label: "Docs" },

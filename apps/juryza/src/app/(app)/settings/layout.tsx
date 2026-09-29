@@ -25,7 +25,10 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
         title="Settings"
         description="Your public profile, sign-in and programmatic access."
       />
-      <nav aria-label="Settings" className="-mb-2 flex gap-1 overflow-x-auto border-b">
+      <nav
+        aria-label="Settings"
+        className="flex gap-1 overflow-x-auto overflow-y-hidden border-b scrollbar-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         {TABS.map((t) => {
           const active = pathname.startsWith(t.href);
           return (

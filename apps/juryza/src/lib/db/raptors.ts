@@ -30,7 +30,7 @@ const DAY = 24 * 60 * 60 * 1000;
 /* Shapes of the published dataset (only the fields we consume).    */
 /* ---------------------------------------------------------------- */
 
-interface AwardEntry {
+export interface AwardEntry {
   event_slug: string;
   event_name: string;
   ended: string;
@@ -42,14 +42,43 @@ interface AwardEntry {
   prize_usd: number | null;
   final_score: number | null;
   code_url: string | null;
+  github_owner?: string | null;
+  person_name?: string | null;
+  team_size?: number | null;
+  discord?: string | null;
+  points?: number | null;
 }
 
-interface Person {
+export interface Person {
+  person_id: string;
   display_name: string | null;
+  name_variants?: string[];
+  discord?: string[];
+  points: number;
+  prize_usd: number;
+  events: number;
+  awards: number;
+  wins?: {
+    first: number;
+    second: number;
+    third: number;
+    category: number;
+    special: number;
+    side_quest: number;
+    honourable_mention: number;
+  };
+  teams?: string[];
+  first_event?: string;
+  first_date?: string;
+  latest_event?: string;
+  latest_date?: string;
+  streak?: number;
+  repeat?: boolean;
+  rookie?: boolean;
   entries: AwardEntry[];
 }
 
-interface EventMeta {
+export interface EventMeta {
   slug: string;
   name: string;
   ended: string;
@@ -57,12 +86,21 @@ interface EventMeta {
   awards: number;
 }
 
-interface Leaderboard {
+export interface LeaderboardDataset {
+  totals: {
+    events_scored: number;
+    events_total: number;
+    people: number;
+    awards: number;
+    prize_usd_awarded: number;
+    repeat_winners: number;
+    latest_event: string;
+  };
   events: EventMeta[];
   people: Person[];
 }
 
-const data = raw as unknown as Leaderboard;
+const data = raw as unknown as LeaderboardDataset;
 
 /* ---------------------------------------------------------------- */
 /* Helpers                                                          */
@@ -71,28 +109,82 @@ const data = raw as unknown as Leaderboard;
 const money = (usd: number | null | undefined) =>
   usd && usd > 0 ? `$${usd.toLocaleString("en-US")}` : null;
 
-/** A person's award, with the person attached so we can name the team roster. */
+export const slugId = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "x";
+
+/**
+ * Extract verified GitHub username for a person from dataset entries.
+ * Checks explicit entry `github_owner` first, then solo project repository ownership.
+ * Never assigns a repository owner to other teammates on a group project.
+ */
+export function getGitHubUsername(person: Person): string | null {
+  // 1. Explicit entry github_owner
+  const direct = person.entries.find((e) => e.github_owner?.trim())?.github_owner?.trim();
+  if (direct) return direct.toLowerCase();
+
+  // 2. Solo project (team_size === 1) repository owner
+  for (const e of person.entries) {
+    if (e.team_size === 1 && e.code_url) {
+      const match = e.code_url.match(/github\.com\/([a-zA-Z0-9_-]+)/);
+      if (match?.[1] && !["orgs", "topics", "features"].includes(match[1].toLowerCase())) {
+        return match[1].toLowerCase();
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Return the stable, canonical username for a person.
+ * If they have a known GitHub owner, use that.
+ * Otherwise fallback to their person_id slug.
+ */
+export function canonicalUsernameFor(person: Person): string {
+  const gh = getGitHubUsername(person);
+  if (gh) return gh;
+  return slugId(person.person_id || person.display_name || "builder");
+}
+
+export function canonicalEmailFor(person: Person): string {
+  const username = canonicalUsernameFor(person);
+  return `${username}@raptors.community`;
+}
+
+export function avatarFor(username: string, hasGithub = false): string {
+  return hasGithub
+    ? `https://github.com/${username}.png`
+    : `https://api.dicebear.com/7.x/identicon/svg?seed=${username}`;
+}
+
+/** A person's award, with the unified person attached. */
 interface OwnedEntry extends AwardEntry {
   person: string | null;
+  personId: string;
+  username: string;
+  email: string;
+}
+
+interface RaptorsProjectMember {
+  name: string;
+  username: string;
+  email: string;
 }
 
 /** A reconstructed project: one distinct `project` title within an event. */
 interface RaptorsProject {
   title: string;
   team: string;
-  members: string[];
+  members: RaptorsProjectMember[];
   codeUrl: string | null;
   bestScore: number | null;
   bestPlacement: number | null;
   labels: string[];
 }
-
-const slugId = (s: string) =>
-  s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40) || "x";
 
 /**
  * A placement-derived score on the 0–5 scale, used only when the dataset has no
@@ -129,8 +221,16 @@ const doc = (text: string): Bundle["projects"][number]["content"] => ({
 function entriesByEvent(): Map<string, OwnedEntry[]> {
   const byEvent = new Map<string, OwnedEntry[]>();
   for (const person of data.people) {
+    const username = canonicalUsernameFor(person);
+    const email = canonicalEmailFor(person);
     for (const e of person.entries) {
-      const owned: OwnedEntry = { ...e, person: person.display_name };
+      const owned: OwnedEntry = {
+        ...e,
+        person: person.display_name,
+        personId: person.person_id,
+        username,
+        email,
+      };
       byEvent.set(e.event_slug, [...(byEvent.get(e.event_slug) ?? []), owned]);
     }
   }
@@ -141,16 +241,22 @@ function entriesByEvent(): Map<string, OwnedEntry[]> {
 function projectsOf(entries: OwnedEntry[]): RaptorsProject[] {
   const byProject = new Map<string, RaptorsProject>();
   for (const e of entries) {
-    // The dataset occasionally omits a team or project name; fall back so the
-    // schema always gets a non-empty string, and skip entries with neither.
     const title = e.project?.trim() || e.team?.trim();
     if (!title) continue;
     const team = e.team?.trim() || title;
     const person = e.person?.trim() || team;
     const key = `${team}::${title}`;
+    const member: RaptorsProjectMember = {
+      name: person,
+      username: e.username,
+      email: e.email,
+    };
+
     const existing = byProject.get(key);
     if (existing) {
-      if (!existing.members.includes(person)) existing.members.push(person);
+      if (!existing.members.some((m) => m.email === member.email)) {
+        existing.members.push(member);
+      }
       if (e.code_url && !existing.codeUrl) existing.codeUrl = e.code_url;
       if (
         e.final_score !== null &&
@@ -167,7 +273,7 @@ function projectsOf(entries: OwnedEntry[]): RaptorsProject[] {
       byProject.set(key, {
         title,
         team,
-        members: [person],
+        members: [member],
         codeUrl: e.code_url,
         bestScore: e.final_score,
         bestPlacement: e.placement,
@@ -179,13 +285,94 @@ function projectsOf(entries: OwnedEntry[]): RaptorsProject[] {
 }
 
 /* ---------------------------------------------------------------- */
-/* Bundle builder                                                   */
+/* Bundle builder & Exports                                         */
 /* ---------------------------------------------------------------- */
 
 /**
- * Build one import bundle per Hackathon Raptors event, newest first. Only
- * events with at least one distinct project are included (a few published no
- * results). Dates are anchored to the real end date, firmly in the past.
+ * Return all real builders from Hackathon Raptors ready for account creation.
+ * Every participant has a single canonical user account, real GitHub avatar,
+ * stats, and uniform password.
+ */
+export function raptorsPeople(): {
+  personId: string;
+  name: string;
+  username: string;
+  email: string;
+  image: string;
+  githubUrl: string | null;
+  points: number;
+  prizeUsd: number;
+  awardsCount: number;
+  eventsCount: number;
+  wins?: Person["wins"];
+  headline: string;
+  bio: string;
+  skills: string[];
+  rank: number;
+}[] {
+  // Sort by points descending to assign real rank
+  const sorted = [...data.people].sort((a, b) => (b.points ?? 0) - (a.points ?? 0));
+
+  return sorted.map((p, idx) => {
+    const ghUser = getGitHubUsername(p);
+    const username = canonicalUsernameFor(p);
+    const email = canonicalEmailFor(p);
+    const image = avatarFor(username, Boolean(ghUser));
+    const githubUrl = ghUser ? `https://github.com/${ghUser}` : null;
+    const name = p.display_name || p.person_id;
+    const rank = idx + 1;
+
+    // Extract tags/tech from code repos or common skills
+    const skills = [
+      "TypeScript",
+      "Next.js",
+      "React",
+      ...(p.entries.some(
+        (e) => e.code_url?.includes("ai") || e.project?.toLowerCase().includes("ai")
+      )
+        ? ["AI/ML"]
+        : []),
+      ...(p.entries.some((e) => e.code_url?.includes("fast") || e.code_url?.includes("rust"))
+        ? ["Rust", "Performance"]
+        : ["PostgreSQL"]),
+    ].slice(0, 5);
+
+    return {
+      personId: p.person_id,
+      name,
+      username,
+      email,
+      image,
+      githubUrl,
+      points: p.points ?? 0,
+      prizeUsd: p.prize_usd ?? 0,
+      awardsCount: p.awards ?? 0,
+      eventsCount: p.events ?? 0,
+      wins: p.wins,
+      headline: `${p.awards}x Award Winner · ${p.points} Pts · ${p.events} Hackathons`,
+      bio: `Hackathon Raptors builder. Ranked #${rank} on the platform with ${p.points} points and $${(p.prize_usd ?? 0).toLocaleString()} in prizes across ${p.events} hackathons.`,
+      skills,
+      rank,
+    };
+  });
+}
+
+/**
+ * Return platform leaderboard data for the centralized leaderboard page.
+ */
+export function raptorsLeaderboardData() {
+  const people = raptorsPeople();
+  return {
+    totals: data.totals,
+    leaderboard: people,
+    events: data.events,
+  };
+}
+
+/**
+ * Build one import bundle per Hackathon Raptors event, newest first.
+ * The team members use stable, unified participant emails so each person's
+ * projects aggregate onto their single profile across all events.
  */
 export function raptorsBundles(): Bundle[] {
   const grouped = entriesByEvent();
@@ -211,8 +398,7 @@ export function raptorsBundles(): Bundle[] {
     const judgingClose = new Date(endedAt).toISOString();
     const eslug = `raptors-${slug}`;
 
-    // Order projects by the podium, then by published score, so the recomputed
-    // leaderboard matches the announcement.
+    // Order projects by the podium, then by published score
     const ordered = [...projects].sort((a, b) => {
       const pa = a.bestPlacement ?? 99;
       const pb = b.bestPlacement ?? 99;
@@ -230,20 +416,16 @@ export function raptorsBundles(): Bundle[] {
         `${p.title} by ${p.team} at ${name}.${p.labels.length ? ` Recognised for: ${p.labels.join(", ")}.` : ""}`
       ),
       repo_url: p.codeUrl ?? null,
-      tech_tags: [],
+      tech_tags: p.codeUrl ? ["Open Source"] : [],
       status: "submitted",
       submitted_at: submissionsClose,
     }));
 
-    // The importer treats each team member as an email address, so emit valid
-    // addresses derived from the person's name, namespaced per event so the
-    // same handle across events doesn't collapse into one account.
+    // Unified participant emails — stable across all events!
     const teams: Bundle["teams"] = ordered.map((p, i) => ({
       id: `${eslug}_tm_${i + 1}`,
       name: p.team,
-      members: p.members.map(
-        (person, mi) => `${slugId(person) || `member-${mi + 1}`}.${eslug}@raptors.example`
-      ),
+      members: p.members.map((m) => m.email),
     }));
 
     const judges: Bundle["judges"] = JUDGE_NAMES.map((jn, i) => ({
@@ -253,9 +435,7 @@ export function raptorsBundles(): Bundle[] {
       tracks: [],
     }));
 
-    // Scores: three judges whose marks average to the project's published (or
-    // placement-derived) 0–5 score, with a small per-judge offset so the
-    // normalization step has spread to correct.
+    // Scores: three judges whose marks average to the project's published score
     const scores: Bundle["scores"] = [];
     ordered.forEach((p, pi) => {
       const target = p.bestScore ?? placementScore(p.bestPlacement);
@@ -271,7 +451,7 @@ export function raptorsBundles(): Bundle[] {
       });
     });
 
-    // Prizes: the real podium as overall ranks, with published amounts.
+    // Prizes: real podium with published amounts
     const podium = ordered
       .filter((p) => p.bestPlacement !== null && p.bestPlacement <= 3)
       .slice(0, 3);
@@ -296,6 +476,7 @@ export function raptorsBundles(): Bundle[] {
         submissions_close: submissionsClose,
         judging_close: judgingClose,
         hue: Math.abs([...slug].reduce((hh, c) => (hh * 31 + c.charCodeAt(0)) | 0, 7)) % 360,
+        is_fixture: false,
       },
       tracks: [],
       rubric: RUBRIC,

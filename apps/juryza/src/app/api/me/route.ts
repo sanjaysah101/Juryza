@@ -50,7 +50,7 @@ const body = z.object({
     )
     .optional(),
   headline: z.string().trim().max(120).nullish(),
-  bio: z.string().trim().max(2000).nullish(),
+  bio: z.string().trim().max(50000).nullish(),
   location: z.string().trim().max(80).nullish(),
   websiteUrl: optionalUrl,
   githubUrl: optionalUrl,

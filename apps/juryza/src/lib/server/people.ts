@@ -114,6 +114,7 @@ export async function overviewFor(userId: string) {
 }
 
 export async function publicProfile(username: string) {
+  const q = username.toLowerCase().trim();
   const [u] = await db
     .select({
       id: userTable.id,
@@ -127,15 +128,32 @@ export async function publicProfile(username: string) {
       websiteUrl: userTable.websiteUrl,
       githubUrl: userTable.githubUrl,
       skills: userTable.skills,
+      points: userTable.points,
+      prizeUsd: userTable.prizeUsd,
+      awardsCount: userTable.awardsCount,
       lookingForTeam: userTable.lookingForTeam,
       createdAt: userTable.createdAt,
     })
     .from(userTable)
-    .where(eq(userTable.username, username.toLowerCase()))
+    .where(
+      sql`${userTable.username} = ${q} or lower(${userTable.email}) = ${`${q}@raptors.community`} or lower(${userTable.githubUrl}) = ${`https://github.com/${q}`}`
+    )
     .limit(1);
   if (!u) return null;
 
-  const [projects, judged, certificates] = await Promise.all([
+  // Compute platform rank if points exist
+  let rank: number | null = null;
+  if (u.points > 0) {
+    const [rankRow] = await db
+      .select({
+        higherCount: sql<number>`count(*)::int`,
+      })
+      .from(userTable)
+      .where(sql`${userTable.points} > ${u.points}`);
+    rank = (rankRow?.higherCount ?? 0) + 1;
+  }
+
+  const [projects, judged, certificates, rawEvents] = await Promise.all([
     db
       .select({
         id: project.id,
@@ -177,6 +195,42 @@ export async function publicProfile(username: string) {
       .innerJoin(event, eq(event.id, certificate.eventId))
       .where(eq(certificate.subjectId, u.id))
       .orderBy(desc(certificate.issuedAt)),
+    db
+      .select({
+        id: event.id,
+        slug: event.slug,
+        name: event.name,
+        hue: event.hue,
+        tagline: event.tagline,
+        submissionsClose: event.submissionsClose,
+        teamName: team.name,
+      })
+      .from(teamMember)
+      .innerJoin(team, eq(team.id, teamMember.teamId))
+      .innerJoin(event, eq(event.id, team.eventId))
+      .where(and(eq(teamMember.userId, u.id), eq(event.visibility, "published")))
+      .orderBy(desc(event.submissionsClose)),
   ]);
-  return { user: u, projects, judged, certificates };
+
+  // Deduplicate participated events so each event appears once in history
+  const eventMap = new Map<string, (typeof rawEvents)[number]>();
+  for (const evt of rawEvents) {
+    const existing = eventMap.get(evt.id);
+    if (existing) {
+      if (evt.teamName && !existing.teamName.includes(evt.teamName)) {
+        existing.teamName = `${existing.teamName}, ${evt.teamName}`;
+      }
+    } else {
+      eventMap.set(evt.id, { ...evt });
+    }
+  }
+  const participatedEvents = Array.from(eventMap.values());
+
+  return {
+    user: { ...u, rank },
+    projects,
+    judged,
+    certificates,
+    participatedEvents,
+  };
 }

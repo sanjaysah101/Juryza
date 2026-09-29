@@ -50,8 +50,7 @@ services:
       # Set to 1 to wipe and reseed the database on start.
       SEED_RESET: ${SEED_RESET:-0}
       # Set to 1 to also seed the Hackathon Raptors real-world showcase events
-      # (off by default; the acceptance database stays fixture + sandbox only).
-      SEED_SHOWCASE: ${SEED_SHOWCASE:-0}
+      SEED_SHOWCASE: ${SEED_SHOWCASE:-1}
     ports:
       - "8080:8080"
     volumes:

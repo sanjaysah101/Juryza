@@ -7,6 +7,7 @@ const COLUMNS = [
     title: "Product",
     links: [
       { href: "/events", label: "Browse events" },
+      { href: "/leaderboard", label: "Global leaderboard" },
       { href: "/manage/new", label: "Host a hackathon" },
       { href: "/#features", label: "Features" },
       { href: "/#how-it-works", label: "How judging works" },

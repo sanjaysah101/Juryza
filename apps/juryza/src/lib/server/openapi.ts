@@ -345,7 +345,7 @@ const bodies = {
       .optional()
       .describe("3–32 characters: letters, numbers, dashes, underscores."),
     headline: z.string().max(120).nullish(),
-    bio: z.string().max(2000).nullish(),
+    bio: z.string().max(50000).nullish(),
     location: z.string().max(80).nullish(),
     websiteUrl: optionalUrl,
     githubUrl: optionalUrl,
